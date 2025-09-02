@@ -101,13 +101,11 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       const uint8Array = new Uint8Array(pcmData.buffer);
       const base64Audio = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
 
-      // Enviar a Gemini con el formato correcto según documentación
-      sessionRef.current.send({
-        realtime_input: {
-          media_chunks: [{
-            mime_type: "audio/pcm;rate=16000",
-            data: base64Audio
-          }]
+      // Enviar a Gemini con el formato correcto según documentación oficial
+      sessionRef.current.sendRealtimeInput({
+        audio: {
+          data: base64Audio,
+          mimeType: "audio/pcm;rate=16000"
         }
       });
 
@@ -129,11 +127,11 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         apiKey: GEMINI_API_KEY
       });
       
-      // Usar modelo recomendado con audio nativo
-      const model = 'gemini-live-2.5-flash-preview';
+      // Usar modelo recomendado con audio nativo según documentación
+      const model = 'gemini-2.0-flash-live-001';
       const config = {
         responseModalities: [Modality.AUDIO, Modality.TEXT],
-        systemInstruction: "Eres un asistente de voz amigable que habla en español. Responde de manera concisa y natural. Siempre responde con audio cuando sea posible."
+        systemInstruction: "Eres un asistente de voz amigable que habla en español. Responde de manera concisa y natural con audio cuando sea posible."
       };
       
       console.log('🔄 Conectando con Gemini Live API...');
@@ -149,27 +147,32 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           onmessage: (message) => {
             console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
             
-            // Manejar respuesta de audio y texto según estructura real de Gemini Live API
+            // Manejar respuesta según documentación oficial
             if (message.serverContent?.modelTurn?.parts) {
               const parts = message.serverContent.modelTurn.parts;
               
               for (const part of parts) {
                 if (part.inlineData?.mimeType?.includes('audio')) {
-                  console.log('🎵 Audio del servidor detectado');
+                  console.log('🎵 Audio recibido de Gemini');
                   playAudioResponse(part.inlineData.data);
                 }
                 
                 if (part.text) {
-                  console.log('💬 Texto del servidor:', part.text);
+                  console.log('💬 Texto de Gemini:', part.text);
                   addMessage(part.text, 'assistant');
                 }
               }
             }
             
-            // Manejar respuesta directa de texto
-            if ((message as any).text) {
-              console.log('💬 Texto directo:', (message as any).text);
-              addMessage((message as any).text, 'assistant');
+            // Verificar si el turno está completo
+            if (message.serverContent?.turnComplete) {
+              console.log('✅ Turno completado');
+            }
+            
+            // Manejar respuesta directa (fallback)
+            if ((message as any).data) {
+              console.log('🎵 Audio directo detectado');
+              playAudioResponse((message as any).data);
             }
           },
           onerror: (error) => {
