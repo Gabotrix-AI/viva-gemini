@@ -92,19 +92,34 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const playAudioResponse = useCallback(async (audioData: string) => {
     try {
-      const audioBuffer = Uint8Array.from(atob(audioData), c => c.charCodeAt(0));
-      const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
+      // Decodificar base64 a ArrayBuffer
+      const binaryString = atob(audioData);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      // Crear blob de audio con formato correcto
+      const audioBlob = new Blob([bytes], { type: 'audio/wav' });
       const audioUrl = URL.createObjectURL(audioBlob);
       
       const audio = new Audio(audioUrl);
+      audio.onloadeddata = () => console.log('Audio cargado, duración:', audio.duration);
       audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        console.log('Audio terminado');
+      };
+      audio.onerror = (e) => {
+        console.error('Error en reproducción:', e);
         URL.revokeObjectURL(audioUrl);
       };
       
+      console.log('Reproduciendo audio de Gemini...');
       await audio.play();
-      addMessage("Reproduciendo respuesta de audio", 'assistant');
+      addMessage("🔊 Gemini respondió", 'assistant');
     } catch (error) {
       console.error('Error reproduciendo audio:', error);
+      addMessage("❌ Error reproduciendo respuesta", 'assistant');
     }
   }, [addMessage]);
 
@@ -185,10 +200,27 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const processAudioForGemini = useCallback(async (audioBlob: Blob) => {
     try {
+      // Convertir WebM a PCM para Gemini
       const arrayBuffer = await audioBlob.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
       
-      // Convertir a base64 en chunks para evitar stack overflow
+      // Crear AudioContext para procesar el audio
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+      
+      // Convertir a mono y resamplear a 16kHz si es necesario
+      const channelData = audioBuffer.getChannelData(0);
+      const targetSampleRate = 16000;
+      const targetLength = Math.floor(channelData.length * targetSampleRate / audioBuffer.sampleRate);
+      
+      // Crear PCM de 16 bits
+      const pcmData = new Int16Array(targetLength);
+      for (let i = 0; i < targetLength; i++) {
+        const sourceIndex = Math.floor(i * audioBuffer.sampleRate / targetSampleRate);
+        pcmData[i] = Math.max(-32768, Math.min(32767, channelData[sourceIndex] * 32767));
+      }
+      
+      // Convertir a base64
+      const uint8Array = new Uint8Array(pcmData.buffer);
       let base64Audio = '';
       const chunkSize = 8192;
       for (let i = 0; i < uint8Array.length; i += chunkSize) {
@@ -196,17 +228,20 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         base64Audio += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
       }
       
+      console.log('Enviando audio PCM a Gemini, tamaño:', pcmData.length);
+      
       if (sessionRef.current) {
         await sessionRef.current.sendRealtimeInput({
           audio: {
             data: base64Audio,
-            mimeType: "audio/webm"
+            mimeType: "audio/pcm;rate=16000"
           }
         });
       }
+      
+      audioContext.close();
     } catch (error) {
       console.error('Error procesando audio:', error);
-      setState('idle');
     }
   }, []);
 
