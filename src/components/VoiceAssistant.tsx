@@ -78,44 +78,70 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   // Buffer de audio para acumular datos antes de enviar
   const processAudioBuffer = useCallback(() => {
-    if (audioBufferRef.current.length === 0 || !sessionRef.current) return;
+    if (audioBufferRef.current.length === 0 || !sessionRef.current) {
+      console.log('⚠️ No hay buffer o sesión disponible');
+      return;
+    }
 
     try {
+      // Validar que la sesión está conectada
+      if (sessionRef.current.readyState !== 1) {
+        console.log('⚠️ Sesión no está conectada, estado:', sessionRef.current.readyState);
+        return;
+      }
+      
       // Combinar todos los chunks en un solo buffer
       const totalLength = audioBufferRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
-      const combinedBuffer = new Float32Array(totalLength);
       
+      // Optimizar: no enviar buffers muy pequeños o muy grandes
+      if (totalLength < 1024) {
+        console.log('⚠️ Buffer muy pequeño, esperando más datos');
+        return;
+      }
+      
+      if (totalLength > 32768) {
+        console.log('⚠️ Buffer muy grande, enviando solo parte');
+        // Tomar solo los primeros chunks para no sobrecargar
+        audioBufferRef.current = audioBufferRef.current.slice(0, 4);
+      }
+      
+      const combinedBuffer = new Float32Array(totalLength);
       let offset = 0;
       for (const chunk of audioBufferRef.current) {
         combinedBuffer.set(chunk, offset);
         offset += chunk.length;
       }
 
-      // Convertir a PCM 16-bit
+      // Convertir a PCM 16-bit con mejor calidad
       const pcmData = new Int16Array(combinedBuffer.length);
       for (let i = 0; i < combinedBuffer.length; i++) {
-        pcmData[i] = Math.max(-32768, Math.min(32767, combinedBuffer[i] * 32767));
+        // Aplicar clipping suave para evitar distorsión
+        const sample = combinedBuffer[i];
+        pcmData[i] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
       }
 
-      // Convertir a base64
+      // Convertir a base64 de manera más eficiente
       const uint8Array = new Uint8Array(pcmData.buffer);
       const base64Audio = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
 
-      // Enviar a Gemini con el formato correcto según documentación oficial
-      sessionRef.current.sendRealtimeInput({
-        audio: {
-          data: base64Audio,
-          mimeType: "audio/pcm;rate=16000"
+      // CORECCIÓN CRÍTICA: Usar session.send() con formato WebSocket correcto
+      sessionRef.current.send({
+        realtime_input: {
+          media_chunks: [{
+            mime_type: "audio/pcm;rate=16000",
+            data: base64Audio
+          }]
         }
       });
 
-      console.log(`📤 Enviado chunk de audio: ${combinedBuffer.length} samples`);
+      console.log(`📤 Enviado chunk de audio: ${combinedBuffer.length} samples (${base64Audio.length} bytes base64)`);
       
       // Limpiar buffer
       audioBufferRef.current = [];
       
     } catch (error) {
       console.error('❌ Error enviando audio:', error);
+      // No limpiar buffer en caso de error temporal
     }
   }, []);
 
@@ -147,32 +173,49 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           onmessage: (message) => {
             console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
             
-            // Manejar respuesta según documentación oficial
-            if (message.serverContent?.modelTurn?.parts) {
-              const parts = message.serverContent.modelTurn.parts;
-              
-              for (const part of parts) {
-                if (part.inlineData?.mimeType?.includes('audio')) {
-                  console.log('🎵 Audio recibido de Gemini');
-                  playAudioResponse(part.inlineData.data);
-                }
+            try {
+              // Manejar respuesta según estructura real de Gemini Live API
+              if (message.serverContent?.modelTurn?.parts) {
+                const parts = message.serverContent.modelTurn.parts;
                 
-                if (part.text) {
-                  console.log('💬 Texto de Gemini:', part.text);
-                  addMessage(part.text, 'assistant');
+                for (const part of parts) {
+                  if (part.inlineData?.mimeType?.includes('audio')) {
+                    console.log('🎵 Audio recibido de Gemini');
+                    playAudioResponse(part.inlineData.data);
+                  }
+                  
+                  if (part.text) {
+                    console.log('💬 Texto de Gemini:', part.text);
+                    addMessage(part.text, 'assistant');
+                  }
                 }
               }
-            }
-            
-            // Verificar si el turno está completo
-            if (message.serverContent?.turnComplete) {
-              console.log('✅ Turno completado');
-            }
-            
-            // Manejar respuesta directa (fallback)
-            if ((message as any).data) {
-              console.log('🎵 Audio directo detectado');
-              playAudioResponse((message as any).data);
+              
+              // Verificar si el turno está completo
+              if (message.serverContent?.turnComplete) {
+                console.log('✅ Turno completado');
+                setState('listening'); // Volver a listening después de completar
+              }
+              
+              // Manejar tipos de mensaje específicos
+              if ((message as any).type === 'serverContent') {
+                console.log('📨 Contenido del servidor:', message);
+              }
+              
+              // Manejar respuesta de audio directo (fallback)
+              if ((message as any).audio?.data) {
+                console.log('🎵 Audio directo detectado');
+                playAudioResponse((message as any).audio.data);
+              }
+              
+              // Manejar texto directo (fallback)
+              if ((message as any).text && typeof (message as any).text === 'string') {
+                console.log('💬 Texto directo:', (message as any).text);
+                addMessage((message as any).text, 'assistant');
+              }
+              
+            } catch (parseError) {
+              console.error('❌ Error procesando mensaje:', parseError);
             }
           },
           onerror: (error) => {
@@ -241,7 +284,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       
       processor.onaudioprocess = (event) => {
-        if (state !== 'listening') return;
+        // Usar ref para obtener el estado actual
+        if (sessionRef.current?.readyState !== 1) return;
         
         const inputBuffer = event.inputBuffer;
         const inputData = inputBuffer.getChannelData(0);
@@ -249,8 +293,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         // Acumular en buffer
         audioBufferRef.current.push(new Float32Array(inputData));
         
-        // Enviar cada 0.5 segundos aproximadamente (8 chunks de 4096 samples a 16kHz)
-        if (audioBufferRef.current.length >= 8) {
+        // Optimizar frecuencia: Enviar cada 1 segundo (16 chunks de 4096 samples a 16kHz)
+        if (audioBufferRef.current.length >= 16) {
           processAudioBuffer();
         }
       };
@@ -258,12 +302,12 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       source.connect(processor);
       processor.connect(audioContext.destination);
       
-      // Procesar buffer cada 500ms como backup
+      // Procesar buffer cada 1 segundo como backup
       const intervalId = setInterval(() => {
-        if (audioBufferRef.current.length > 0 && state === 'listening') {
+        if (audioBufferRef.current.length > 0 && sessionRef.current?.readyState === 1) {
           processAudioBuffer();
         }
-      }, 500);
+      }, 1000);
       
       // Guardar intervalo para limpieza posterior
       (processor as any).intervalId = intervalId;
