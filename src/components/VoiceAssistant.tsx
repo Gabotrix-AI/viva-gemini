@@ -150,7 +150,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         }
       }
       
-      // Obtener acceso al micrófono con configuración óptima para streaming
+      // Obtener acceso al micrófono
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           sampleRate: 16000,
@@ -161,31 +161,52 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       });
       
       streamRef.current = stream;
+      addMessage("🎤 Conversación iniciada - Puedes hablar ahora", 'user');
       
-      // Configurar MediaRecorder para streaming continuo
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
+      // Procesar audio en tiempo real usando Web Audio API
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
       
-      mediaRecorderRef.current = mediaRecorder;
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
       
-      // Enviar chunks de audio en tiempo real cada 250ms
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && sessionRef.current) {
-          await processAudioForGemini(event.data);
+      processor.onaudioprocess = async (event) => {
+        const inputBuffer = event.inputBuffer;
+        const inputData = inputBuffer.getChannelData(0);
+        
+        // Convertir a PCM 16-bit
+        const pcmData = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          pcmData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32767));
+        }
+        
+        // Convertir a base64
+        const uint8Array = new Uint8Array(pcmData.buffer);
+        const base64Audio = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+        
+        // Enviar a Gemini
+        if (sessionRef.current) {
+          try {
+            await sessionRef.current.sendRealtimeInput({
+              audio: {
+                data: base64Audio,
+                mimeType: "audio/pcm;rate=16000"
+              }
+            });
+          } catch (error) {
+            console.error('Error enviando audio:', error);
+          }
         }
       };
       
-      // Iniciar grabación con chunks pequeños para streaming continuo
-      mediaRecorder.start(250); // Enviar audio cada 250ms para verdadero tiempo real
-      
-      addMessage("Conversación iniciada - Hablando en tiempo real...", 'user');
+      source.connect(processor);
+      processor.connect(audioContext.destination);
       
     } catch (error) {
       console.error('Error iniciando grabación:', error);
       toast({
         title: "Error de micrófono",
-        description: "No se pudo acceder al micrófono",
+        description: "No se pudo acceder al micrófono: " + error.message,
         variant: "destructive"
       });
       setState('idle');
@@ -211,53 +232,6 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     
     addMessage("Conversación finalizada", 'user');
   }, [addMessage]);
-
-  const processAudioForGemini = useCallback(async (audioBlob: Blob) => {
-    try {
-      // Convertir WebM a PCM para Gemini
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      
-      // Crear AudioContext para procesar el audio
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      
-      // Convertir a mono y resamplear a 16kHz si es necesario
-      const channelData = audioBuffer.getChannelData(0);
-      const targetSampleRate = 16000;
-      const targetLength = Math.floor(channelData.length * targetSampleRate / audioBuffer.sampleRate);
-      
-      // Crear PCM de 16 bits
-      const pcmData = new Int16Array(targetLength);
-      for (let i = 0; i < targetLength; i++) {
-        const sourceIndex = Math.floor(i * audioBuffer.sampleRate / targetSampleRate);
-        pcmData[i] = Math.max(-32768, Math.min(32767, channelData[sourceIndex] * 32767));
-      }
-      
-      // Convertir a base64
-      const uint8Array = new Uint8Array(pcmData.buffer);
-      let base64Audio = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < uint8Array.length; i += chunkSize) {
-        const chunk = uint8Array.slice(i, i + chunkSize);
-        base64Audio += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
-      }
-      
-      console.log('Enviando audio PCM a Gemini, tamaño:', pcmData.length);
-      
-      if (sessionRef.current) {
-        await sessionRef.current.sendRealtimeInput({
-          audio: {
-            data: base64Audio,
-            mimeType: "audio/pcm;rate=16000"
-          }
-        });
-      }
-      
-      audioContext.close();
-    } catch (error) {
-      console.error('Error procesando audio:', error);
-    }
-  }, []);
 
   const handleToggleConversation = useCallback(() => {
     if (state === 'idle') {
