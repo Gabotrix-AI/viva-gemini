@@ -58,10 +58,10 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             console.log('Conexión establecida con Gemini');
           },
           onmessage: async (message: any) => {
-            if (message.data && state === 'processing') {
-              setState('speaking');
+            if (message.data) {
+              // Reproducir respuesta de audio inmediatamente sin cambiar estado
               await playAudioResponse(message.data);
-              setState('idle');
+              addMessage("Gemini respondió", 'assistant');
             }
           },
           onerror: (error: any) => {
@@ -121,7 +121,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         }
       }
       
-      // Obtener acceso al micrófono
+      // Obtener acceso al micrófono con configuración óptima para streaming
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           sampleRate: 16000,
@@ -133,34 +133,24 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       
       streamRef.current = stream;
       
-      // Configurar AudioContext para procesamiento
-      audioContextRef.current = new AudioContext({ sampleRate: 16000 });
-      
-      // Configurar MediaRecorder
+      // Configurar MediaRecorder para streaming continuo
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: 'audio/webm;codecs=opus'
       });
       
       mediaRecorderRef.current = mediaRecorder;
       
-      const audioChunks: BlobPart[] = [];
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data);
+      // Enviar chunks de audio en tiempo real cada 250ms
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data.size > 0 && sessionRef.current) {
+          await processAudioForGemini(event.data);
         }
       };
       
-      mediaRecorder.onstop = async () => {
-        if (audioChunks.length > 0) {
-          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-          await processAudioForGemini(audioBlob);
-        }
-      };
+      // Iniciar grabación con chunks pequeños para streaming continuo
+      mediaRecorder.start(250); // Enviar audio cada 250ms para verdadero tiempo real
       
-      mediaRecorder.start(1000); // Capturar cada segundo
-      
-      addMessage("Escuchando...", 'user');
+      addMessage("Conversación iniciada - Hablando en tiempo real...", 'user');
       
     } catch (error) {
       console.error('Error iniciando grabación:', error);
@@ -174,7 +164,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   }, [initializeGeminiSession, addMessage, toast]);
 
   const stopListening = useCallback(() => {
-    setState('processing');
+    setState('idle');
     
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
       mediaRecorderRef.current.stop();
@@ -190,17 +180,21 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       audioContextRef.current = null;
     }
     
-    addMessage("Procesando audio...", 'user');
+    addMessage("Conversación finalizada", 'user');
   }, [addMessage]);
 
   const processAudioForGemini = useCallback(async (audioBlob: Blob) => {
     try {
-      // Convertir a ArrayBuffer
       const arrayBuffer = await audioBlob.arrayBuffer();
-      
-      // Convertir a base64 para enviar a Gemini
       const uint8Array = new Uint8Array(arrayBuffer);
-      const base64Audio = btoa(String.fromCharCode(...uint8Array));
+      
+      // Convertir a base64 en chunks para evitar stack overflow
+      let base64Audio = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        const chunk = uint8Array.slice(i, i + chunkSize);
+        base64Audio += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
+      }
       
       if (sessionRef.current) {
         await sessionRef.current.sendRealtimeInput({
