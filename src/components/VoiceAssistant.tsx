@@ -93,16 +93,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       // Combinar todos los chunks en un solo buffer
       const totalLength = audioBufferRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
       
-      // Optimizar: no enviar buffers muy pequeños o muy grandes
-      if (totalLength < 1024) {
+      // Optimizar: enviar chunks de tamaño adecuado (mínimo 0.1s = 1600 samples a 16kHz)
+      if (totalLength < 1600) {
         console.log('⚠️ Buffer muy pequeño, esperando más datos');
         return;
       }
       
-      if (totalLength > 32768) {
-        console.log('⚠️ Buffer muy grande, enviando solo parte');
-        // Tomar solo los primeros chunks para no sobrecargar
-        audioBufferRef.current = audioBufferRef.current.slice(0, 4);
+      // Limitar tamaño máximo para evitar problemas de memoria
+      if (totalLength > 16000) { // máximo 1 segundo de audio
+        console.log('⚠️ Buffer muy grande, tomando solo 1 segundo');
+        audioBufferRef.current = audioBufferRef.current.slice(0, Math.ceil(16000 / 4096));
       }
       
       const combinedBuffer = new Float32Array(totalLength);
@@ -120,19 +120,36 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         pcmData[i] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
       }
 
-      // Convertir a base64 de manera más eficiente
+      // Convertir a base64 de manera más robusta para chunks grandes
       const uint8Array = new Uint8Array(pcmData.buffer);
-      const base64Audio = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+      let base64Audio = '';
+      
+      // Procesar en chunks para evitar stack overflow con arrays grandes
+      const chunkSize = 8192;
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        const chunk = uint8Array.slice(i, i + chunkSize);
+        base64Audio += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
+      }
 
-      // CORECCIÓN CRÍTICA: Usar session.send() con formato WebSocket correcto
-      sessionRef.current.send({
+      // CORRECCIÓN CRÍTICA: Enviar como JSON string, no objeto JavaScript
+      const message = {
         realtime_input: {
           media_chunks: [{
             mime_type: "audio/pcm;rate=16000",
             data: base64Audio
           }]
         }
-      });
+      };
+
+      // Validar datos antes del envío
+      if (!base64Audio || base64Audio.length === 0) {
+        console.log('⚠️ Audio base64 vacío, saltando envío');
+        audioBufferRef.current = [];
+        return;
+      }
+
+      console.log('📤 Enviando mensaje:', JSON.stringify(message, null, 2));
+      sessionRef.current.send(JSON.stringify(message));
 
       console.log(`📤 Enviado chunk de audio: ${combinedBuffer.length} samples (${base64Audio.length} bytes base64)`);
       
@@ -229,7 +246,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           },
           onclose: (event) => {
             console.log('🔌 Conexión cerrada:', event);
-            addMessage("Conexión cerrada", 'assistant');
+            console.log('Código de cierre:', event.code, 'Razón:', event.reason);
+            
+            if (event.code === 1006) {
+              console.error('❌ Conexión cerrada anormalmente - posible problema de formato de datos');
+              addMessage("❌ Error de conexión - datos inválidos", 'assistant');
+            } else if (event.code === 1000) {
+              addMessage("✅ Conexión cerrada normalmente", 'assistant');
+            } else {
+              addMessage(`⚠️ Conexión cerrada (código: ${event.code})`, 'assistant');
+            }
             setState('idle');
           }
         }
@@ -293,8 +319,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         // Acumular en buffer
         audioBufferRef.current.push(new Float32Array(inputData));
         
-        // Optimizar frecuencia: Enviar cada 1 segundo (16 chunks de 4096 samples a 16kHz)
-        if (audioBufferRef.current.length >= 16) {
+        // Optimizar frecuencia: Enviar cada 0.5 segundos (8 chunks de 4096 samples a 16kHz)
+        if (audioBufferRef.current.length >= 8) {
           processAudioBuffer();
         }
       };
@@ -302,12 +328,12 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       source.connect(processor);
       processor.connect(audioContext.destination);
       
-      // Procesar buffer cada 1 segundo como backup
+      // Procesar buffer cada 0.5 segundo como backup
       const intervalId = setInterval(() => {
         if (audioBufferRef.current.length > 0 && sessionRef.current?.readyState === 1) {
           processAudioBuffer();
         }
-      }, 1000);
+      }, 500);
       
       // Guardar intervalo para limpieza posterior
       (processor as any).intervalId = intervalId;
