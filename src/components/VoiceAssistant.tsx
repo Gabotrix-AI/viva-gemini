@@ -38,58 +38,6 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     setMessages(prev => [...prev, newMessage]);
   }, []);
 
-  const initializeGeminiSession = useCallback(async () => {
-    try {
-      const { GoogleGenAI, Modality } = await import('@google/genai');
-      
-      const ai = new GoogleGenAI({
-        apiKey: GEMINI_API_KEY
-      });
-      
-      const config = {
-        responseModalities: [Modality.AUDIO],
-        systemInstruction: "Eres un asistente de voz amigable. Responde de manera concisa y útil en español. Mantén tus respuestas breves pero informativas."
-      };
-      
-      const session = await ai.live.connect({
-        model: "gemini-2.5-flash-preview-native-audio-dialog",
-        callbacks: {
-          onopen: () => {
-            console.log('Conexión establecida con Gemini');
-          },
-          onmessage: async (message: any) => {
-            if (message.data) {
-              // Reproducir respuesta de audio inmediatamente sin cambiar estado
-              await playAudioResponse(message.data);
-              addMessage("Gemini respondió", 'assistant');
-            }
-          },
-          onerror: (error: any) => {
-            console.error('Error en Gemini:', error);
-            toast({
-              title: "Error de conexión",
-              description: "No se pudo conectar con el asistente de voz",
-              variant: "destructive"
-            });
-            setState('idle');
-          }
-        },
-        config
-      });
-      
-      sessionRef.current = session;
-      return session;
-    } catch (error) {
-      console.error('Error inicializando Gemini:', error);
-      toast({
-        title: "Error de inicialización",
-        description: "No se pudo inicializar el asistente de voz",
-        variant: "destructive"
-      });
-      return null;
-    }
-  }, [state, toast]);
-
   const playAudioResponse = useCallback(async (audioData: string) => {
     try {
       // Decodificar base64 a ArrayBuffer
@@ -122,6 +70,72 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       addMessage("❌ Error reproduciendo respuesta", 'assistant');
     }
   }, [addMessage]);
+
+  const initializeGeminiSession = useCallback(async () => {
+    try {
+      const { GoogleGenAI, Modality } = await import('@google/genai');
+      
+      const ai = new GoogleGenAI({
+        apiKey: GEMINI_API_KEY
+      });
+      
+      // Usar el modelo recomendado para audio bidireccional
+      const model = 'gemini-live-2.5-flash-preview';
+      const config = {
+        responseModalities: [Modality.AUDIO, Modality.TEXT],
+        systemInstruction: "Eres un asistente de voz amigable. Responde de manera concisa y útil en español. Mantén tus respuestas breves pero informativas."
+      };
+      
+      const session = await ai.live.connect({
+        model,
+        callbacks: {
+          onopen: () => {
+            console.log('✅ Conexión establecida con Gemini Live API');
+            addMessage("Conexión establecida con Gemini", 'assistant');
+          },
+          onmessage: (message) => {
+            console.log('📨 Mensaje recibido:', message);
+            
+            // Manejar diferentes tipos de respuesta
+            if (message.data) {
+              console.log('🎵 Reproduciendo audio de Gemini');
+              playAudioResponse(message.data);
+            }
+            
+            if (message.text) {
+              console.log('💬 Texto de Gemini:', message.text);
+              addMessage(message.text, 'assistant');
+            }
+          },
+          onerror: (error) => {
+            console.error('❌ Error en Gemini:', error);
+            toast({
+              title: "Error de conexión",
+              description: "Error en la comunicación con Gemini: " + error.message,
+              variant: "destructive"
+            });
+            setState('idle');
+          },
+          onclose: (event) => {
+            console.log('🔌 Conexión cerrada:', event.reason);
+            addMessage("Conexión con Gemini cerrada", 'assistant');
+          }
+        },
+        config
+      });
+      
+      sessionRef.current = session;
+      return session;
+    } catch (error) {
+      console.error('Error inicializando Gemini:', error);
+      toast({
+        title: "Error de inicialización",
+        description: "No se pudo inicializar el asistente de voz: " + error.message,
+        variant: "destructive"
+      });
+      return null;
+    }
+  }, [toast, addMessage, playAudioResponse]);
 
   const startListening = useCallback(async () => {
     try {
