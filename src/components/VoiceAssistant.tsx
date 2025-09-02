@@ -84,9 +84,9 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     }
 
     try {
-      // Validar que la sesión está conectada
-      if (sessionRef.current.readyState !== 1) {
-        console.log('⚠️ Sesión no está conectada, estado:', sessionRef.current.readyState);
+      // Validar que la sesión está disponible (SDK no tiene readyState como WebSocket)
+      if (!sessionRef.current) {
+        console.log('⚠️ Sesión no disponible');
         return;
       }
       
@@ -131,13 +131,11 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         base64Audio += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
       }
 
-      // CORRECCIÓN CRÍTICA: Enviar como JSON string, no objeto JavaScript
-      const message = {
-        realtime_input: {
-          media_chunks: [{
-            mime_type: "audio/pcm;rate=16000",
-            data: base64Audio
-          }]
+      // CORRECCIÓN CRÍTICA: Usar formato SDK correcto, no WebSocket crudo
+      const audioPart = {
+        inlineData: { 
+          data: base64Audio, 
+          mimeType: "audio/pcm" // SDK maneja la tasa internamente
         }
       };
 
@@ -148,8 +146,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         return;
       }
 
-      console.log('📤 Enviando mensaje:', JSON.stringify(message, null, 2));
-      sessionRef.current.send(JSON.stringify(message));
+      console.log('📤 Enviando parte de audio:', { 
+        mimeType: audioPart.inlineData.mimeType,
+        dataLength: base64Audio.length 
+      });
+      
+      // El SDK espera un array de partes de contenido
+      sessionRef.current.send([audioPart]);
 
       console.log(`📤 Enviado chunk de audio: ${combinedBuffer.length} samples (${base64Audio.length} bytes base64)`);
       
@@ -310,8 +313,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
       
       processor.onaudioprocess = (event) => {
-        // Usar ref para obtener el estado actual
-        if (sessionRef.current?.readyState !== 1) return;
+        // Verificar que la sesión sigue disponible
+        if (!sessionRef.current) return;
         
         const inputBuffer = event.inputBuffer;
         const inputData = inputBuffer.getChannelData(0);
@@ -330,7 +333,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       
       // Procesar buffer cada 0.5 segundo como backup
       const intervalId = setInterval(() => {
-        if (audioBufferRef.current.length > 0 && sessionRef.current?.readyState === 1) {
+        if (audioBufferRef.current.length > 0 && sessionRef.current) {
           processAudioBuffer();
         }
       }, 500);
