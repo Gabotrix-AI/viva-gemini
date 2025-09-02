@@ -8,29 +8,46 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 235 39% 97%;
+    --foreground: 224 30% 13%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 224 30% 13%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 224 30% 13%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 262 100% 65%;
+    --primary-foreground: 0 0% 98%;
 
     --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary-foreground: 224 30% 13%;
 
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 262 100% 65%;
+    --accent-foreground: 0 0% 98%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
+
+    /* AI Assistant Theme */
+    --ai-primary: 262 100% 65%;
+    --ai-primary-light: 266 100% 82%;
+    --ai-gradient: linear-gradient(135deg, hsl(262 100% 65%), hsl(266 100% 82%));
+    --ai-gradient-subtle: linear-gradient(180deg, hsl(235 39% 97%), hsl(262 100% 97%));
+    --ai-shadow: 0 10px 40px -15px hsl(262 100% 65% / 0.4);
+    --ai-shadow-active: 0 15px 50px -10px hsl(262 100% 65% / 0.6);
+    
+    /* Voice Animation */
+    --pulse-ring: 0 0 0 0 hsl(262 100% 65% / 0.3);
+    --pulse-ring-active: 0 0 0 20px hsl(262 100% 65% / 0);
+    
+    /* Status Colors */
+    --status-listening: 34 100% 60%;
+    --status-processing: 262 100% 65%;
+    --status-speaking: 120 100% 40%;
 
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
@@ -56,20 +73,28 @@ All colors MUST be HSL.
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
+    --background: 224 30% 8%;
     --foreground: 210 40% 98%;
 
-    --card: 222.2 84% 4.9%;
+    --card: 224 30% 10%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222.2 84% 4.9%;
+    --popover: 224 30% 10%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 262 100% 75%;
+    --primary-foreground: 224 30% 8%;
 
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
+
+    /* AI Assistant Theme - Dark */
+    --ai-primary: 262 100% 75%;
+    --ai-primary-light: 266 100% 85%;
+    --ai-gradient: linear-gradient(135deg, hsl(262 100% 75%), hsl(266 100% 85%));
+    --ai-gradient-subtle: linear-gradient(180deg, hsl(224 30% 8%), hsl(262 100% 12%));
+    --ai-shadow: 0 10px 40px -15px hsl(262 100% 75% / 0.5);
+    --ai-shadow-active: 0 15px 50px -10px hsl(262 100% 75% / 0.7);
 
     --muted: 217.2 32.6% 17.5%;
     --muted-foreground: 215 20.2% 65.1%;
@@ -101,5 +126,67 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
+    background: var(--ai-gradient-subtle);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  /* Voice Button Animations */
+  .voice-button {
+    @apply relative transition-all duration-300 ease-out;
+    box-shadow: var(--ai-shadow);
+  }
+  
+  .voice-button:hover {
+    @apply scale-105;
+    box-shadow: var(--ai-shadow-active);
+  }
+  
+  .voice-button.listening {
+    @apply animate-pulse;
+    box-shadow: var(--pulse-ring);
+    animation: pulse-ring 2s infinite;
+  }
+  
+  @keyframes pulse-ring {
+    0% {
+      box-shadow: var(--pulse-ring);
+    }
+    70% {
+      box-shadow: var(--pulse-ring-active);
+    }
+    100% {
+      box-shadow: var(--pulse-ring);
+    }
+  }
+  
+  /* Status Indicator */
+  .status-indicator {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium;
+  }
+  
+  .status-listening {
+    @apply bg-yellow-500/20 text-yellow-600 border border-yellow-500/30;
+  }
+  
+  .status-processing {
+    @apply bg-purple-500/20 text-purple-600 border border-purple-500/30;
+  }
+  
+  .status-speaking {
+    @apply bg-green-500/20 text-green-600 border border-green-500/30;
+  }
+  
+  /* Transcription Area */
+  .transcription-area {
+    @apply bg-card/50 backdrop-blur-sm border border-border/50 rounded-2xl p-6;
+    @apply max-h-96 overflow-y-auto scroll-smooth;
+  }
+  
+  /* Glassmorphism effect */
+  .glass-card {
+    @apply bg-card/70 backdrop-blur-lg border border-border/50 rounded-3xl;
+    @apply shadow-2xl shadow-black/10;
   }
 }
