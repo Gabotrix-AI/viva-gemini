@@ -25,7 +25,9 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioBufferRef = useRef<Float32Array[]>([]);
-  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const maxReconnectAttempts = 3;
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const GEMINI_API_KEY = 'AIzaSyA-nn8ICl5G00uklIG6zvh5tAq4U5qQUqU';
 
@@ -251,15 +253,36 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             console.log('🔌 Conexión cerrada:', event);
             console.log('Código de cierre:', event.code, 'Razón:', event.reason);
             
-            if (event.code === 1006) {
-              console.error('❌ Conexión cerrada anormalmente - posible problema de formato de datos');
-              addMessage("❌ Error de conexión - datos inválidos", 'assistant');
+            if (event.code === 1007) {
+              console.error('❌ Error 1007 - Bug conocido de Google Gemini Live API');
+              addMessage("⚠️ Error conocido del servidor (Bug de Google). Intentando reconectar...", 'assistant');
+              
+              // Intentar reconexión automática si no se han agotado los intentos
+              if (reconnectAttempts < maxReconnectAttempts) {
+                console.log(`🔄 Intentando reconexión automática ${reconnectAttempts + 1}/${maxReconnectAttempts}`);
+                setReconnectAttempts(prev => prev + 1);
+                
+                // Reconectar después de 2 segundos
+                reconnectTimeoutRef.current = setTimeout(() => {
+                  if (state === 'listening') {
+                    console.log('🔄 Reconectando automáticamente...');
+                    startListening();
+                  }
+                }, 2000);
+              } else {
+                addMessage("❌ Máximo de reintentos alcanzado. Este es un bug conocido de Google Gemini Live API.", 'assistant');
+                setState('idle');
+                setReconnectAttempts(0);
+              }
             } else if (event.code === 1000) {
               addMessage("✅ Conexión cerrada normalmente", 'assistant');
+              setState('idle');
+              setReconnectAttempts(0);
             } else {
               addMessage(`⚠️ Conexión cerrada (código: ${event.code})`, 'assistant');
+              setState('idle');
+              setReconnectAttempts(0);
             }
-            setState('idle');
           }
         }
       });
@@ -280,6 +303,12 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const startListening = useCallback(async () => {
     try {
+      // Limpiar timeout de reconexión si existe
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+
       setState('listening');
       
       // Inicializar sesión de Gemini
@@ -354,6 +383,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const stopListening = useCallback(() => {
     setState('idle');
+    setReconnectAttempts(0); // Reset intentos de reconexión
+    
+    // Limpiar timeout de reconexión
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
     
     // Enviar último chunk si existe
     if (audioBufferRef.current.length > 0) {
@@ -381,12 +417,6 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     if (audioContextRef.current) {
       audioContextRef.current.close();
       audioContextRef.current = null;
-    }
-    
-    // Limpiar worklet si existe
-    if (workletNodeRef.current) {
-      workletNodeRef.current.disconnect();
-      workletNodeRef.current = null;
     }
     
     // Limpiar buffer
@@ -447,6 +477,10 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         <p className="text-lg text-muted-foreground max-w-2xl">
           Haz clic en el botón para comenzar a hablar. El asistente te responderá en tiempo real.
         </p>
+        <div className="bg-yellow-100 dark:bg-yellow-900/20 p-3 rounded-lg text-sm text-yellow-800 dark:text-yellow-200 max-w-2xl">
+          ⚠️ <strong>Nota:</strong> Existe un bug conocido en la API de Google Gemini Live que puede causar desconexiones. 
+          Se implementó reconexión automática como solución temporal.
+        </div>
       </div>
 
       {/* Status Indicator */}
