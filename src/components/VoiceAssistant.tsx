@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -30,7 +30,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   // AVISO DE SEGURIDAD: Esta clave está hardcodeada para este ejercicio.
   // En un entorno de producción, DEBES usar variables de entorno o un proxy seguro.
-  const GEMINI_API_KEY = 'AIzaSyA-nn8ICl5G00uklIG6zvh5tAq4U5qQUqU'; // ¡REEMPLAZA CON TU CLAVE REAL!
+  const GEMINI_API_KEY = 'TU_API_KEY_DE_GEMINI_AQUI'; // ¡REEMPLAZA CON TU CLAVE REAL!
 
   const addMessage = useCallback((content: string, type: 'user' | 'assistant') => {
     const newMessage: Message = {
@@ -85,98 +85,111 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const initializeGeminiSession = useCallback(async () => {
     try {
-      const { GoogleGenAI, Modality } = await import('@google/genai');
+      if (!GEMINI_API_KEY || GEMINI_API_KEY === 'TU_API_KEY_DE_GEMINI_AQUI') {
+        toast({
+          title: "Error de configuración",
+          description: "Por favor, configura tu API key de Gemini.",
+          variant: "destructive"
+        });
+        return null;
+      }
+
+      console.log('🔄 Inicializando Gemini Live API...');
       
-      const ai = new GoogleGenAI({
-        apiKey: GEMINI_API_KEY
+      const genaiModule = await import('@google/genai');
+      console.log('📦 Módulo Gemini disponibles:', Object.keys(genaiModule));
+      
+      // Usar any para acceder a los exports del módulo
+      const GoogleAI = (genaiModule as any).GoogleGenerativeAI || 
+                       (genaiModule as any).GoogleAI || 
+                       (genaiModule as any).default ||
+                       genaiModule;
+      
+      if (!GoogleAI) {
+        throw new Error(`GoogleAI no disponible. Exports: ${Object.keys(genaiModule).join(', ')}`);
+      }
+      
+      console.log('🤖 Creando cliente Google AI...');
+      const genAI = new GoogleAI(GEMINI_API_KEY);
+      
+      console.log('📋 Obteniendo modelo...');
+      const model = genAI.getGenerativeModel({ 
+        model: 'gemini-2.0-flash-exp'
       });
+
+      console.log('💬 Iniciando chat...');
+      const chat = model.startChat({
+        history: [],
+        systemInstruction: 'Eres un asistente de voz amigable que habla en español.'
+      });
+
+      console.log('🎙️ Intentando obtener sesión Live...');
       
-      // Usar modelo recomendado con audio nativo según documentación
-      const model = 'gemini-2.0-flash-live-001';
-      const config = {
-        responseModalities: [Modality.AUDIO, Modality.TEXT],
-        systemInstruction: "Eres un asistente de voz amigable y servicial que habla en español. Responde de manera concisa y natural con audio cuando sea posible."
-      };
-      
-      console.log('🔄 Conectando con Gemini Live API...');
-      
-      const session = await ai.live.connect({
-        model,
-        config,
-        callbacks: {
-          onopen: () => {
-            console.log('✅ Conexión establecida con Gemini Live API');
-            addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
-            setState('listening');
-          },
-          onmessage: (message) => {
-            console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
-            
-            try {
-              // Manejar respuesta según estructura real de Gemini Live API
-              if (message.serverContent?.modelTurn?.parts) {
-                const parts = message.serverContent.modelTurn.parts;
-                
-                for (const part of parts) {
-                  if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
-                    console.log('🎵 Audio recibido de Gemini');
-                    // Decodificar base64 a Uint8Array
-                    const binaryString = atob(part.inlineData.data);
-                    const bytes = new Uint8Array(binaryString.length);
-                    for (let i = 0; i < binaryString.length; i++) {
-                      bytes[i] = binaryString.charCodeAt(i);
-                    }
-                    playAudioResponse(bytes);
-                  }
-                  
-                  if (part.text) {
-                    console.log('💬 Texto de Gemini:', part.text);
-                    addMessage(part.text, 'assistant');
-                  }
-                }
+      // Diferentes métodos posibles para Live Session
+      let session;
+      if (typeof chat.getLiveSession === 'function') {
+        session = await chat.getLiveSession({
+          audioInputConfig: { sampleRateHz: 16000, encoding: 'LINEAR16' },
+          audioOutputConfig: { sampleRateHz: 24000, encoding: 'LINEAR16' },
+          responseModalities: ['AUDIO', 'TEXT']
+        });
+      } else if (typeof model.startLiveSession === 'function') {
+        session = await model.startLiveSession({
+          audioInputConfig: { sampleRateHz: 16000, encoding: 'LINEAR16' },
+          audioOutputConfig: { sampleRateHz: 24000, encoding: 'LINEAR16' }
+        });
+      } else {
+        throw new Error('Live Session no disponible en este modelo');
+      }
+
+      console.log('✅ Sesión Live creada:', session);
+
+      if (typeof session.on === 'function') {
+        session.on('message', (message: any) => {
+          console.log('📨 Mensaje:', message);
+          
+          if (message.serverContent?.modelTurn?.parts) {
+            for (const part of message.serverContent.modelTurn.parts) {
+              if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.bytes) {
+                playAudioResponse(part.inlineData.bytes);
               }
-              
-              // Verificar si el turno está completo
-              if (message.serverContent?.turnComplete) {
-                console.log('✅ Turno completado');
-                // El estado se gestiona por playNextAudioChunk para evitar interrupciones
+              if (part.text) {
+                addMessage(part.text, 'assistant');
               }
-              
-            } catch (parseError) {
-              console.error('❌ Error procesando mensaje:', parseError);
             }
-          },
-          onerror: (error) => {
-            console.error('❌ Error en Gemini:', error);
-            toast({
-              title: "Error de conexión",
-              description: `Error: ${error.message}`,
-              variant: "destructive"
-            });
-            setState('idle');
-            stopAudioProcessing();
-          },
-          onclose: (event) => {
-            console.log('🔌 Conexión cerrada:', event);
-            if (event.code === 1000) {
-              addMessage("✅ Conexión cerrada normalmente", 'assistant');
-            } else {
-              addMessage(`⚠️ Conexión cerrada (código: ${event.code})`, 'assistant');
-            }
-            setState('idle');
-            stopAudioProcessing();
           }
-        }
-      });
+
+          if (message.serverContent?.turnComplete) {
+            setState('listening');
+          }
+        });
+
+        session.on('error', (error: any) => {
+          console.error('❌ Error:', error);
+          toast({
+            title: "Error de conexión",
+            description: `Error: ${error.message}`,
+            variant: "destructive"
+          });
+          setState('idle');
+          stopAudioProcessing();
+        });
+
+        session.on('close', () => {
+          console.log('🔌 Sesión cerrada');
+          addMessage("🔌 Conexión cerrada", 'assistant');
+          setState('idle');
+          stopAudioProcessing();
+        });
+      }
       
       liveSessionRef.current = session;
       return session;
-      
     } catch (error: any) {
-      console.error('❌ Error inicializando Gemini Live API:', error);
+      console.error('❌ Error:', error);
       toast({
-        title: "Error de inicialización",
-        description: `No se pudo conectar: ${error.message}`,
+        title: "Error de inicialización", 
+        description: error.message,
         variant: "destructive"
       });
       setState('idle');
@@ -230,19 +243,19 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           const pcmData = new Int16Array(event.data);
           const uint8Array = new Uint8Array(pcmData.buffer);
           
-          // Usar el método correcto del SDK para enviar audio
-          const base64Audio = btoa(String.fromCharCode(...uint8Array));
+          // Crear Part para el audio según el SDK de Gemini
+          const audioPart = {
+            inlineData: {
+              bytes: uint8Array,
+              mimeType: "audio/pcm;rate=16000",
+            },
+          };
           
-          // Enviar usando el método correcto de la API
           try {
-            liveSessionRef.current.sendRealtimeInput({
-              audio: {
-                data: base64Audio,
-                mimeType: "audio/pcm;rate=16000"
-              }
-            });
+            console.log('🎵 Enviando audio chunk...');
+            liveSessionRef.current.send([audioPart]);
           } catch (error) {
-            console.error('Error enviando audio:', error);
+            console.error('❌ Error enviando audio:', error);
           }
         }
       };
