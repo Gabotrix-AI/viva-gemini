@@ -106,6 +106,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         ws: websocket,
         connected: false,
         setupSent: false,
+        setupComplete: false,
         send: (data: any) => {
           if (websocket.readyState === WebSocket.OPEN) {
             console.log('📤 Enviando mensaje:', JSON.stringify(data, null, 2));
@@ -134,6 +135,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         console.log('📤 Enviando setup:', JSON.stringify(setupMessage, null, 2));
         liveSession.send(setupMessage);
         liveSession.setupSent = true;
+        
+        // Timeout para considerar setup completo si no recibimos confirmación
+        setTimeout(() => {
+          if (liveSession.connected && !liveSession.setupComplete) {
+            console.log('⚠️ Timeout en setup - asumiendo completado');
+            addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
+            setState('listening');
+            liveSession.setupComplete = true;
+          }
+        }, 3000);
       };
 
       websocket.onmessage = (event) => {
@@ -144,6 +155,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           // Manejar confirmación de configuración
           if (message.setupComplete) {
             console.log('✅ Setup completado exitosamente');
+            liveSession.setupComplete = true;
             addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
             setState('listening');
             return;
