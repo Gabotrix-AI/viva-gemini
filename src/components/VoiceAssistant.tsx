@@ -100,38 +100,22 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       const GoogleGenAIModule = await import('@google/genai');
       console.log('📦 Módulo Gemini disponibles:', Object.keys(GoogleGenAIModule));
       
-      // CORRECCIÓN CRÍTICA: Usar Client y Live del nuevo SDK @google/genai
-      const { Client, Live } = GoogleGenAIModule as any;
+      // CORRECCIÓN CRÍTICA: Usar GoogleGenAI y Live del nuevo SDK @google/genai
+      const { GoogleGenAI, Live } = GoogleGenAIModule as any;
       
-      if (!Client || !Live) {
-        throw new Error(`Client o Live no disponibles. Exports: ${Object.keys(GoogleGenAIModule).join(', ')}`);
+      if (!GoogleGenAI || !Live) {
+        throw new Error(`GoogleGenAI o Live no disponibles. Exports: ${Object.keys(GoogleGenAIModule).join(', ')}`);
       }
       
       // Crear cliente de Gemini
-      const client = new Client({
-        apiKey: GEMINI_API_KEY,
-      });
+      const client = new GoogleGenAI(GEMINI_API_KEY);
       
       // Crear sesión Live
       const liveSession = new Live({
         client,
-        model: 'gemini-2.5-flash-preview-native-audio-dialog',
+        model: 'gemini-2.0-flash-exp',
         config: {
-          generation: {
-            responseModalities: ['audio', 'text'],
-          },
-          speech: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: 'Puck',
-              },
-            },
-          },
-        },
-        systemInstruction: {
-          parts: [{
-            text: "Eres un asistente de voz amigable y servicial que habla en español. Responde de manera concisa y natural con audio cuando sea posible."
-          }]
+          responseModalities: ['audio', 'text']
         }
       });
 
@@ -178,11 +162,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
       liveSession.on('close', (event) => {
         console.log('🔌 Conexión cerrada:', event);
-        if (event.code === 1000) {
-          addMessage("✅ Conexión cerrada normalmente", 'assistant');
-        } else {
-          addMessage(`⚠️ Conexión cerrada (código: ${event.code})`, 'assistant');
-        }
+        addMessage("✅ Conversación terminada", 'assistant');
         setState('idle');
         stopAudioProcessing();
       });
