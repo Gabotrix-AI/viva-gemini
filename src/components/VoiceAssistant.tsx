@@ -341,33 +341,57 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   }, [addMessage, initializeGeminiLiveSession, toast, state]);
 
   const stopAudioProcessing = useCallback(() => {
+    console.log('🛑 stopAudioProcessing - Iniciando limpieza completa...');
+    
     if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      console.log('🎤 Cerrando stream de micrófono...');
+      mediaStreamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('🔇 Track detenido:', track.kind);
+      });
       mediaStreamRef.current = null;
     }
+    
     if (audioProcessorNodeRef.current) {
+      console.log('🔊 Desconectando AudioWorkletNode...');
       audioProcessorNodeRef.current.disconnect();
       audioProcessorNodeRef.current = null;
     }
+    
     if (liveSessionRef.current) {
+      console.log('🔌 Cerrando sesión de Gemini...');
       try {
+        liveSessionRef.current.connected = false;
+        liveSessionRef.current.setupComplete = false;
+        liveSessionRef.current.setupSent = false;
         liveSessionRef.current.close();
       } catch (error) {
         console.error('Error cerrando sesión de Gemini:', error);
       }
       liveSessionRef.current = null;
     }
-    // No cerrar AudioContext aquí para permitir reproducción de audio en cola
-    // if (audioContextRef.current) {
-    //   audioContextRef.current.close();
-    //   audioContextRef.current = null;
-    // }
+    
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      console.log('🔊 Cerrando AudioContext...');
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    
     isPlayingRef.current = false;
     audioQueueRef.current = [];
+    
+    console.log('✅ Limpieza completa terminada');
   }, []);
 
   const handleToggleConversation = useCallback(() => {
     console.log('🎯 handleToggleConversation - Estado actual:', state);
+    console.log('🔍 Estado de referencias:', {
+      hasMediaStream: !!mediaStreamRef.current,
+      hasAudioProcessor: !!audioProcessorNodeRef.current,
+      hasLiveSession: !!liveSessionRef.current,
+      hasAudioContext: !!audioContextRef.current,
+      liveSessionConnected: liveSessionRef.current?.connected
+    });
     
     if (state === 'idle') {
       console.log('🚀 Iniciando conversación...');
@@ -408,6 +432,14 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         };
     }
   };
+
+  // Limpiar todo al desmontar el componente
+  useEffect(() => {
+    return () => {
+      console.log('🧹 Componente desmontándose - limpieza final');
+      stopAudioProcessing();
+    };
+  }, [stopAudioProcessing]);
 
   const statusConfig = getStatusConfig(state);
 
