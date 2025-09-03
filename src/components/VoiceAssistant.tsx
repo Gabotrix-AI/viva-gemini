@@ -30,7 +30,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   // AVISO DE SEGURIDAD: Esta clave está hardcodeada para este ejercicio.
   // En un entorno de producción, DEBES usar variables de entorno o un proxy seguro.
-  const GEMINI_API_KEY = 'TU_API_KEY_DE_GEMINI_AQUI'; // ¡REEMPLAZA CON TU CLAVE REAL!
+  const GEMINI_API_KEY = 'AIzaSyCO4XPD1q024prR1VRNd6xAg-1igH07TTw'; // ¡REEMPLAZA CON TU CLAVE REAL!
 
   const addMessage = useCallback((content: string, type: 'user' | 'assistant') => {
     const newMessage: Message = {
@@ -85,7 +85,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const initializeGeminiSession = useCallback(async () => {
     try {
-      if (!GEMINI_API_KEY || GEMINI_API_KEY === 'TU_API_KEY_DE_GEMINI_AQUI') {
+      if (!GEMINI_API_KEY) {
         toast({
           title: "Error de configuración",
           description: "Por favor, configura tu API key de Gemini.",
