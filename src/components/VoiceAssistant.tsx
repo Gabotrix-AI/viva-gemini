@@ -21,7 +21,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const { toast } = useToast();
   
-  const sessionRef = useRef<any>(null); // Referencia a la sesión de Gemini Live
+  const liveSessionRef = useRef<any>(null); // Referencia a la sesión de Gemini Live
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioProcessorNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -169,7 +169,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         }
       });
       
-      sessionRef.current = session;
+      liveSessionRef.current = session;
       return session;
       
     } catch (error: any) {
@@ -226,7 +226,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
       // Enviar audio procesado a Gemini
       audioProcessorNodeRef.current.port.onmessage = (event) => {
-        if (sessionRef.current) {
+        if (liveSessionRef.current) {
           const pcmData = new Int16Array(event.data);
           const uint8Array = new Uint8Array(pcmData.buffer);
           
@@ -240,7 +240,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           
           // Enviar usando el método live
           try {
-            sessionRef.current.receive([audioPart]);
+            liveSessionRef.current.send([audioPart]);
           } catch (error) {
             console.error('Error enviando audio:', error);
           }
@@ -268,13 +268,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       audioProcessorNodeRef.current.disconnect();
       audioProcessorNodeRef.current = null;
     }
-    if (sessionRef.current) {
+    if (liveSessionRef.current) {
       try {
-        sessionRef.current.close();
+        liveSessionRef.current.close();
       } catch (error) {
         console.error('Error cerrando sesión de Gemini:', error);
       }
-      sessionRef.current = null;
+      liveSessionRef.current = null;
     }
     // No cerrar AudioContext aquí para permitir reproducción de audio en cola
     // if (audioContextRef.current) {
