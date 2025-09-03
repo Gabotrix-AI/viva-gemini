@@ -136,15 +136,15 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         liveSession.send(setupMessage);
         liveSession.setupSent = true;
         
-        // Timeout para considerar setup completo si no recibimos confirmación
+        // Timeout más corto y forzar setup completo si no recibimos confirmación
         setTimeout(() => {
           if (liveSession.connected && !liveSession.setupComplete) {
-            console.log('⚠️ Timeout en setup - asumiendo completado');
+            console.log('⚠️ Timeout en setup - FORZANDO completado');
+            liveSession.setupComplete = true;
             addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
             setState('listening');
-            liveSession.setupComplete = true;
           }
-        }, 3000);
+        }, 1000); // Reducido a 1 segundo
       };
 
       websocket.onmessage = (event) => {
@@ -296,36 +296,37 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       }
       console.log('✅ Sesión de Gemini inicializada');
 
-      // Enviar audio procesado a Gemini - SOLO después de setup completo
+      // Enviar audio procesado a Gemini - Simplificado
       audioProcessorNodeRef.current.port.onmessage = (event) => {
-        if (liveSessionRef.current && liveSessionRef.current.connected && liveSessionRef.current.setupComplete) {
-          const pcmData = new Int16Array(event.data);
-          
-          // Verificar si hay audio real (no solo silencio)
-          const hasAudio = pcmData.some(sample => Math.abs(sample) > 500); // Umbral más alto
-          
-          if (hasAudio) {
-            console.log('🎤 Enviando audio real detectado');
-            // Convertir PCM a base64 
-            const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
-            
-            // Enviar audio usando el formato correcto para Gemini Live API
-            liveSessionRef.current.send({
-              clientContent: {
-                turns: [{
-                  parts: [{
-                    inlineData: {
-                      mimeType: "audio/pcm;rate=16000;channels=1",
-                      data: base64Audio
-                    }
-                  }]
-                }],
-                turnComplete: false
+        if (liveSessionRef.current && liveSessionRef.current.connected) {
+          // Esperar 2 segundos después de la conexión antes de enviar audio
+          setTimeout(() => {
+            if (liveSessionRef.current && liveSessionRef.current.connected) {
+              const pcmData = new Int16Array(event.data);
+              
+              // Verificar si hay audio real
+              const hasAudio = pcmData.some(sample => Math.abs(sample) > 500);
+              
+              if (hasAudio) {
+                console.log('🎤 Enviando audio real detectado');
+                const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
+                
+                liveSessionRef.current.send({
+                  clientContent: {
+                    turns: [{
+                      parts: [{
+                        inlineData: {
+                          mimeType: "audio/pcm;rate=16000;channels=1", 
+                          data: base64Audio
+                        }
+                      }]
+                    }],
+                    turnComplete: false
+                  }
+                });
               }
-            });
-          }
-        } else {
-          console.log('⚠️ Audio detectado pero setup no completo aún');
+            }
+          }, 2000); // Esperar 2 segundos después de conexión
         }
       };
 
