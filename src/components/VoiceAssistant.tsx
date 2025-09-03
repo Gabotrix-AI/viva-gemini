@@ -246,18 +246,28 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const startListening = useCallback(async () => {
     try {
-      if (state !== 'idle') return; // Evitar iniciar si ya está activo
+      console.log('🎤 startListening - Estado actual:', state);
+      
+      if (state !== 'idle') {
+        console.log('⚠️ Ya está activo, cancelando');
+        return; // Evitar iniciar si ya está activo
+      }
 
+      console.log('🔄 Cambiando estado a processing...');
       setState('processing'); // Estado intermedio mientras se inicializa
 
       // Inicializar AudioContext si no existe
       if (!audioContextRef.current) {
+        console.log('🔊 Inicializando AudioContext...');
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
         // Cargar AudioWorklet module
+        console.log('📡 Cargando AudioWorklet...');
         await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
+        console.log('✅ AudioWorklet cargado');
       }
 
       // Obtener acceso al micrófono
+      console.log('🎤 Solicitando acceso al micrófono...');
       mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: 16000,
@@ -267,6 +277,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           autoGainControl: true
         }
       });
+      console.log('✅ Micrófono obtenido');
       addMessage("🎤 Micrófono activado", 'user');
 
       // Crear fuente de audio desde el micrófono
@@ -278,11 +289,14 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       // NO conectar a destination para evitar feedback del micrófono
 
       // Inicializar sesión de Gemini Live API
+      console.log('🔗 Inicializando sesión de Gemini...');
       const session = await initializeGeminiLiveSession();
       if (!session) {
+        console.error('❌ No se pudo inicializar la sesión');
         stopAudioProcessing();
         return;
       }
+      console.log('✅ Sesión de Gemini inicializada');
 
       // Enviar audio procesado a Gemini
       audioProcessorNodeRef.current.port.onmessage = (event) => {
@@ -353,9 +367,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   }, []);
 
   const handleToggleConversation = useCallback(() => {
+    console.log('🎯 handleToggleConversation - Estado actual:', state);
+    
     if (state === 'idle') {
+      console.log('🚀 Iniciando conversación...');
       startListening();
     } else {
+      console.log('🛑 Deteniendo conversación...');
       stopAudioProcessing();
       setState('idle');
       addMessage("🛑 Conversación finalizada", 'user');
