@@ -231,16 +231,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           const uint8Array = new Uint8Array(pcmData.buffer);
           
           // Usar el método correcto del SDK para enviar audio
-          const audioPart = {
-            inlineData: {
-              data: btoa(String.fromCharCode(...uint8Array)),
-              mimeType: 'audio/pcm;rate=16000',
-            },
-          };
+          const base64Audio = btoa(String.fromCharCode(...uint8Array));
           
-          // Enviar usando el método live
+          // Enviar usando el método correcto de la API
           try {
-            liveSessionRef.current.send([audioPart]);
+            liveSessionRef.current.sendRealtimeInput({
+              audio: {
+                data: base64Audio,
+                mimeType: "audio/pcm;rate=16000"
+              }
+            });
           } catch (error) {
             console.error('Error enviando audio:', error);
           }
