@@ -443,6 +443,15 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
   const statusConfig = getStatusConfig(state);
 
+  // Debug logging en el render
+  console.log('🔍 RENDER - Estado actual:', state, {
+    hasMediaStream: !!mediaStreamRef.current,
+    hasAudioProcessor: !!audioProcessorNodeRef.current,
+    hasLiveSession: !!liveSessionRef.current,
+    liveSessionConnected: liveSessionRef.current?.connected,
+    audioContextState: audioContextRef.current?.state
+  });
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 p-4">
       <Card className="w-full max-w-md shadow-lg rounded-lg">
@@ -451,7 +460,10 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         </CardHeader>
         <CardContent className="flex flex-col items-center space-y-6">
           <Button 
-            onClick={handleToggleConversation} 
+            onClick={() => {
+              console.log('🖱️ Botón presionado - Estado antes:', state);
+              handleToggleConversation();
+            }} 
             className={`w-48 h-48 rounded-full flex items-center justify-center text-white text-lg font-semibold shadow-xl 
               ${state === 'listening' ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}
             `}
