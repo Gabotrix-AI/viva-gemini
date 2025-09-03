@@ -122,12 +122,19 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         console.log('✅ Conexión WebSocket establecida');
         liveSession.connected = true;
         
-        // Setup message simplificado y corregido
+        // Setup message con formato corregido según documentación oficial
         const setupMessage = {
           setup: {
             model: "models/gemini-2.0-flash-exp",
             generationConfig: {
-              responseModalities: ["AUDIO", "TEXT"]
+              responseModalities: ["AUDIO", "TEXT"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: "Aoede"
+                  }
+                }
+              }
             }
           }
         };
@@ -310,13 +317,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             // Convertir PCM a base64 para el nuevo SDK
             const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
             
-            // Enviar audio usando el formato oficial de la API con mimeType consistente
+            // Enviar audio usando el formato oficial de la API con mimeType correcto
             liveSessionRef.current.send({
               clientContent: {
                 turns: [{
                   parts: [{
                     inlineData: {
-                      mimeType: "audio/pcm;rate=16000",
+                      mimeType: "audio/pcm",
                       data: base64Audio
                     }
                   }]
