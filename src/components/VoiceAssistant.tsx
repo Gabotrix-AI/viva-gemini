@@ -97,80 +97,88 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
       console.log('🔄 Conectando con Gemini Live API...');
       
-      const GoogleGenAIModule = await import('@google/genai');
-      console.log('📦 Módulo Gemini disponibles:', Object.keys(GoogleGenAIModule));
+      // Usar WebSocket directo para Gemini Live API
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
       
-      // CORRECCIÓN CRÍTICA: Usar GoogleGenAI y Live del nuevo SDK @google/genai
-      const { GoogleGenAI, Live } = GoogleGenAIModule as any;
+      const websocket = new WebSocket(wsUrl);
       
-      if (!GoogleGenAI || !Live) {
-        throw new Error(`GoogleGenAI o Live no disponibles. Exports: ${Object.keys(GoogleGenAIModule).join(', ')}`);
-      }
-      
-      // Crear cliente de Gemini con la configuración correcta
-      const client = new GoogleGenAI({
-        apiKey: GEMINI_API_KEY
-      });
-      
-      // Crear sesión Live
-      const liveSession = new Live({
-        client,
-        model: 'gemini-2.0-flash-exp',
-        config: {
-          responseModalities: ['audio', 'text']
+      const liveSession = {
+        ws: websocket,
+        connected: false,
+        send: (data: any) => {
+          if (websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify(data));
+          }
+        },
+        close: () => {
+          websocket.close();
         }
-      });
+      };
 
-      liveSession.on('open', () => {
+      websocket.onopen = () => {
         console.log('✅ Conexión establecida con Gemini Live API');
+        liveSession.connected = true;
         addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
         setState('listening');
-      });
-
-      liveSession.on('message', (message) => {
-        console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
         
-        if (message.data?.parts) {
-          const parts = message.data.parts;
-          for (const part of parts) {
-            if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
-              // Convertir base64 a Uint8Array
-              const audioData = new Uint8Array(atob(part.inlineData.data).split('').map(char => char.charCodeAt(0)));
-              playAudioResponse(audioData);
-            }
-            
-            if (part.text) {
-              addMessage(part.text, 'assistant');
+        // Enviar configuración inicial
+        websocket.send(JSON.stringify({
+          setup: {
+            model: "models/gemini-2.0-flash-exp",
+            generation_config: {
+              response_modalities: ["AUDIO", "TEXT"]
             }
           }
-        }
+        }));
+      };
 
-        if (message.turnComplete) {
-          console.log('✅ Turno completado');
-          setState('listening');
-        }
-      });
+      websocket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
+          
+          if (message.serverContent?.modelTurn?.parts) {
+            const parts = message.serverContent.modelTurn.parts;
+            for (const part of parts) {
+              if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
+                // Convertir base64 a Uint8Array
+                const audioData = new Uint8Array(atob(part.inlineData.data).split('').map(char => char.charCodeAt(0)));
+                playAudioResponse(audioData);
+              }
+              
+              if (part.text) {
+                addMessage(part.text, 'assistant');
+              }
+            }
+          }
 
-      liveSession.on('error', (error) => {
+          if (message.serverContent?.turnComplete) {
+            console.log('✅ Turno completado');
+            setState('listening');
+          }
+        } catch (error) {
+          console.error('❌ Error parseando mensaje:', error);
+        }
+      };
+
+      websocket.onerror = (error) => {
         console.error('❌ Error en Gemini Live API:', error);
         toast({
           title: "Error de conexión",
-          description: `Error: ${error.message}`,
+          description: "Error en la conexión WebSocket",
           variant: "destructive"
         });
         setState('idle');
         stopAudioProcessing();
-      });
+      };
 
-      liveSession.on('close', (event) => {
+      websocket.onclose = (event) => {
         console.log('🔌 Conexión cerrada:', event);
+        liveSession.connected = false;
         addMessage("✅ Conversación terminada", 'assistant');
         setState('idle');
         stopAudioProcessing();
-      });
-
-      // Conectar la sesión
-      await liveSession.connect();
+      };
       
       liveSessionRef.current = liveSession;
       return liveSession;
@@ -235,14 +243,19 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           // Convertir PCM a base64 para el nuevo SDK
           const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
           
-          // Enviar usando la nueva estructura del SDK @google/genai
+          // Enviar audio usando WebSocket directo
           liveSessionRef.current.send({
-            parts: [{
-              inlineData: {
-                mimeType: "audio/pcm;rate=16000;channels=1",
-                data: base64Audio
-              }
-            }]
+            clientContent: {
+              turns: [{
+                parts: [{
+                  inlineData: {
+                    mimeType: "audio/pcm;rate=16000;channels=1",
+                    data: base64Audio
+                  }
+                }]
+              }],
+              turnComplete: true
+            }
           });
         }
       };
