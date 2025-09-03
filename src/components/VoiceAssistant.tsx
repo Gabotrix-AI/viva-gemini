@@ -1,10 +1,9 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Mic, Volume2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { useConversation } from '@11labs/react';
 
 interface VoiceAssistantProps {}
 
@@ -20,40 +19,16 @@ interface Message {
 const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   const [state, setState] = useState<AssistantState>('idle');
   const [messages, setMessages] = useState<Message[]>([]);
-  const [apiKey, setApiKey] = useState('');
   const { toast } = useToast();
   
-  const conversation = useConversation({
-    onConnect: () => {
-      console.log('✅ Conectado a ElevenLabs');
-      addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
-      setState('listening');
-    },
-    onDisconnect: () => {
-      console.log('🔌 Desconectado de ElevenLabs');
-      addMessage("✅ Conversación terminada", 'assistant');
-      setState('idle');
-    },
-    onMessage: (message) => {
-      console.log('📨 Mensaje de ElevenLabs:', message);
-      
-      if (message.type === 'user_transcript') {
-        addMessage(message.message, 'user');
-      } else if (message.type === 'agent_response') {
-        addMessage(message.message, 'assistant');
-        setState('speaking');
-      }
-    },
-    onError: (error) => {
-      console.error('❌ Error ElevenLabs:', error);
-      toast({
-        title: "Error de conexión",
-        description: `Error: ${error.message}`,
-        variant: "destructive"
-      });
-      setState('idle');
-    }
-  });
+  const websocketRef = useRef<WebSocket | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioProcessorRef = useRef<AudioWorkletNode | null>(null);
+  const isConnectedRef = useRef(false);
+
+  // API Key - reemplazar con tu clave real
+  const GEMINI_API_KEY = 'AIzaSyCO4XPD1q024prR1VRNd6xAg-1igH07TTw';
 
   const addMessage = useCallback((content: string, type: 'user' | 'assistant') => {
     const newMessage: Message = {
@@ -65,28 +40,205 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     setMessages(prev => [...prev, newMessage]);
   }, []);
 
-  const handleToggleConversation = useCallback(async () => {
-    if (state === 'idle') {
-      if (!apiKey) {
+  const playAudioResponse = useCallback(async (audioData: Uint8Array) => {
+    try {
+      if (!audioContextRef.current) return;
+      
+      const audioBuffer = await audioContextRef.current.decodeAudioData(audioData.buffer);
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContextRef.current.destination);
+      
+      setState('speaking');
+      source.onended = () => setState('listening');
+      source.start(0);
+    } catch (error) {
+      console.error('Error reproduciendo audio:', error);
+    }
+  }, []);
+
+  const initializeWebSocket = useCallback(() => {
+    const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
+    
+    websocketRef.current = new WebSocket(wsUrl);
+    
+    websocketRef.current.onopen = () => {
+      console.log('🔗 WebSocket conectado');
+      isConnectedRef.current = true;
+      
+      // Enviar setup básico
+      const setupMessage = {
+        setup: {
+          model: "models/gemini-2.0-flash-exp",
+          generationConfig: {
+            responseModalities: ["AUDIO"]
+          }
+        }
+      };
+      
+      console.log('📤 Enviando setup:', setupMessage);
+      websocketRef.current?.send(JSON.stringify(setupMessage));
+      
+      // Marcar como listo después de 1 segundo
+      setTimeout(() => {
+        addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
+        setState('listening');
+      }, 1000);
+    };
+    
+    websocketRef.current.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        console.log('📨 Respuesta completa:', JSON.stringify(message, null, 2));
+        
+        // Manejar respuestas de configuración
+        if (message.setupComplete) {
+          console.log('✅ Setup confirmado por Gemini');
+          return;
+        }
+        
+        // Manejar contenido del servidor
+        if (message.serverContent) {
+          console.log('🎯 Contenido del servidor recibido');
+          
+          // Buscar partes de audio
+          if (message.serverContent.modelTurn?.parts) {
+            for (const part of message.serverContent.modelTurn.parts) {
+              if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
+                console.log('🔊 Audio recibido de Gemini');
+                const audioData = new Uint8Array(
+                  atob(part.inlineData.data).split('').map(char => char.charCodeAt(0))
+                );
+                playAudioResponse(audioData);
+              }
+            }
+          }
+          
+          // Manejar transcripciones si las hay
+          if (message.serverContent.turnComplete) {
+            console.log('✅ Turno completado');
+            setState('listening');
+          }
+        }
+      } catch (error) {
+        console.error('Error procesando mensaje:', error);
+      }
+    };
+    
+    websocketRef.current.onerror = (error) => {
+      console.error('❌ Error WebSocket:', error);
+      toast({
+        title: "Error de conexión",
+        description: "Error en la conexión con Gemini",
+        variant: "destructive"
+      });
+    };
+    
+    websocketRef.current.onclose = (event) => {
+      console.log('🔌 WebSocket cerrado:', event.code, event.reason);
+      isConnectedRef.current = false;
+      setState('idle');
+      if (event.code !== 1000) {
         toast({
-          title: "API Key requerida",
-          description: "Por favor ingresa tu API key de ElevenLabs",
+          title: "Conexión perdida",
+          description: `Código: ${event.code}. ${event.reason || 'Conexión cerrada inesperadamente'}`,
           variant: "destructive"
         });
-        return;
       }
+    };
+  }, [addMessage, playAudioResponse, toast]);
 
+  const setupAudio = useCallback(async () => {
+    try {
+      // Configurar AudioContext
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
+        sampleRate: 16000
+      });
+      
+      // Cargar AudioWorklet
+      await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
+      
+      // Obtener micrófono
+      mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+      
+      // Configurar procesamiento de audio
+      const source = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
+      audioProcessorRef.current = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
+      source.connect(audioProcessorRef.current);
+      
+      // Enviar audio a Gemini
+      audioProcessorRef.current.port.onmessage = (event) => {
+        if (!isConnectedRef.current || !websocketRef.current) return;
+        
+        const pcmData = new Int16Array(event.data);
+        const hasAudio = pcmData.some(sample => Math.abs(sample) > 1000);
+        
+        if (hasAudio) {
+          const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
+          
+          const audioMessage = {
+            clientContent: {
+              turns: [{
+                parts: [{
+                  inlineData: {
+                    mimeType: "audio/pcm;rate=16000;channels=1",
+                    data: base64Audio
+                  }
+                }]
+              }],
+              turnComplete: false
+            }
+          };
+          
+          websocketRef.current.send(JSON.stringify(audioMessage));
+        }
+      };
+      
+    } catch (error) {
+      console.error('Error configurando audio:', error);
+      throw error;
+    }
+  }, []);
+
+  const cleanup = useCallback(() => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+    
+    if (audioProcessorRef.current) {
+      audioProcessorRef.current.disconnect();
+      audioProcessorRef.current = null;
+    }
+    
+    if (websocketRef.current) {
+      websocketRef.current.close();
+      websocketRef.current = null;
+    }
+    
+    if (audioContextRef.current) {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    
+    isConnectedRef.current = false;
+  }, []);
+
+  const handleToggleConversation = useCallback(async () => {
+    if (state === 'idle') {
       setState('processing');
       
       try {
-        // Solicitar acceso al micrófono primero
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-        
-        // Usar directamente con agentId público o URL firmada
-        await conversation.startSession({ 
-          agentId: "tu_agent_id_aqui" // Reemplazar con tu agent ID
-        });
-        
+        await setupAudio();
+        initializeWebSocket();
+        addMessage("🎤 Micrófono activado", 'user');
       } catch (error: any) {
         console.error('Error iniciando conversación:', error);
         toast({
@@ -95,12 +247,14 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           variant: "destructive"
         });
         setState('idle');
+        cleanup();
       }
     } else {
-      await conversation.endSession();
+      cleanup();
       setState('idle');
+      addMessage("🛑 Conversación finalizada", 'user');
     }
-  }, [state, apiKey, conversation, toast]);
+  }, [state, setupAudio, initializeWebSocket, addMessage, cleanup, toast]);
 
   const getStatusConfig = (currentState: AssistantState) => {
     switch (currentState) {
@@ -137,28 +291,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 p-4">
       <Card className="w-full max-w-md shadow-lg rounded-lg">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl font-bold">Asistente de Voz con ElevenLabs</CardTitle>
+          <CardTitle className="text-2xl font-bold">Asistente de Voz con Gemini Live API</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col items-center space-y-6">
-          {!apiKey && (
-            <div className="w-full space-y-2">
-              <label className="text-sm font-medium">API Key de ElevenLabs:</label>
-              <input
-                type="password"
-                placeholder="Ingresa tu API key"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                className="w-full p-2 border rounded"
-              />
-            </div>
-          )}
-          
           <Button 
             onClick={handleToggleConversation}
-            disabled={!apiKey}
             className={`w-48 h-48 rounded-full flex items-center justify-center text-white text-lg font-semibold shadow-xl 
               ${state === 'listening' ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}
-              ${!apiKey ? 'opacity-50 cursor-not-allowed' : ''}
             `}
           >
             {state === 'idle' ? 'Iniciar Conversación' : 'Detener Conversación'}
