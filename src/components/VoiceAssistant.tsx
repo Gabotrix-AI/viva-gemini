@@ -86,42 +86,78 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       }, 1000);
     };
     
-    websocketRef.current.onmessage = (event) => {
+    websocketRef.current.onmessage = async (event) => {
       try {
-        const message = JSON.parse(event.data);
-        console.log('📨 Respuesta completa:', JSON.stringify(message, null, 2));
+        console.log('📨 Tipo de dato recibido:', typeof event.data, event.data.constructor.name);
         
-        // Manejar respuestas de configuración
-        if (message.setupComplete) {
-          console.log('✅ Setup confirmado por Gemini');
-          return;
+        // Manejar respuestas como Blob (datos binarios)
+        if (event.data instanceof Blob) {
+          console.log('📦 Recibido Blob de tamaño:', event.data.size);
+          
+          // Convertir Blob a texto para ver si es JSON
+          const text = await event.data.text();
+          console.log('📄 Contenido del Blob:', text.substring(0, 200) + '...');
+          
+          try {
+            const message = JSON.parse(text);
+            console.log('✅ Blob contenía JSON válido:', JSON.stringify(message, null, 2));
+            handleGeminiMessage(message);
+          } catch (jsonError) {
+            console.log('⚠️ Blob no es JSON, probablemente es audio binario');
+            // Si no es JSON, podría ser audio directo
+            const audioData = new Uint8Array(await event.data.arrayBuffer());
+            console.log('🔊 Intentando reproducir como audio, tamaño:', audioData.length);
+            playAudioResponse(audioData);
+          }
+        } 
+        // Manejar respuestas como texto/JSON normal
+        else if (typeof event.data === 'string') {
+          console.log('📝 Recibido texto:', event.data.substring(0, 200) + '...');
+          const message = JSON.parse(event.data);
+          console.log('✅ JSON parseado exitosamente:', JSON.stringify(message, null, 2));
+          handleGeminiMessage(message);
+        }
+        // Manejar otros tipos de datos
+        else {
+          console.log('❓ Tipo de dato desconocido:', typeof event.data);
         }
         
-        // Manejar contenido del servidor
-        if (message.serverContent) {
-          console.log('🎯 Contenido del servidor recibido');
-          
-          // Buscar partes de audio
-          if (message.serverContent.modelTurn?.parts) {
-            for (const part of message.serverContent.modelTurn.parts) {
-              if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
-                console.log('🔊 Audio recibido de Gemini');
-                const audioData = new Uint8Array(
-                  atob(part.inlineData.data).split('').map(char => char.charCodeAt(0))
-                );
-                playAudioResponse(audioData);
-              }
+      } catch (error) {
+        console.error('❌ Error procesando mensaje completo:', error);
+        console.log('🔍 Datos originales:', event.data);
+      }
+    };
+    
+    // Función separada para manejar mensajes JSON de Gemini
+    const handleGeminiMessage = (message: any) => {
+      // Manejar respuestas de configuración
+      if (message.setupComplete) {
+        console.log('✅ Setup confirmado por Gemini');
+        return;
+      }
+      
+      // Manejar contenido del servidor
+      if (message.serverContent) {
+        console.log('🎯 Contenido del servidor recibido');
+        
+        // Buscar partes de audio
+        if (message.serverContent.modelTurn?.parts) {
+          for (const part of message.serverContent.modelTurn.parts) {
+            if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
+              console.log('🔊 Audio JSON recibido de Gemini');
+              const audioData = new Uint8Array(
+                atob(part.inlineData.data).split('').map(char => char.charCodeAt(0))
+              );
+              playAudioResponse(audioData);
             }
           }
-          
-          // Manejar transcripciones si las hay
-          if (message.serverContent.turnComplete) {
-            console.log('✅ Turno completado');
-            setState('listening');
-          }
         }
-      } catch (error) {
-        console.error('Error procesando mensaje:', error);
+        
+        // Manejar transcripciones si las hay
+        if (message.serverContent.turnComplete) {
+          console.log('✅ Turno completado');
+          setState('listening');
+        }
       }
     };
     
