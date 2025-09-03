@@ -122,19 +122,20 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         console.log('✅ Conexión WebSocket establecida');
         liveSession.connected = true;
         
-        // Setup message con formato corregido según documentación oficial
+        // Setup message corregido según la documentación oficial
         const setupMessage = {
           setup: {
             model: "models/gemini-2.0-flash-exp",
             generationConfig: {
-              responseModalities: ["AUDIO", "TEXT"],
+              responseModalities: ["AUDIO"], // Solo AUDIO, no TEXT
               speechConfig: {
                 voiceConfig: {
                   prebuiltVoiceConfig: {
                     voiceName: "Aoede"
                   }
                 }
-              }
+              },
+              outputAudioTranscription: {} // Esto habilita las transcripciones de texto
             }
           }
         };
@@ -181,16 +182,27 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             return;
           }
           
-          // Manejar contenido del servidor
+          // Manejar transcripción de texto del audio
+          if (message.serverContent?.outputTranscription?.text) {
+            const transcriptionText = message.serverContent.outputTranscription.text;
+            console.log('📝 Transcripción recibida:', transcriptionText);
+            addMessage(transcriptionText, 'assistant');
+          }
+          
+          // Manejar contenido del servidor (audio y otras partes)
           if (message.serverContent?.modelTurn?.parts) {
             const parts = message.serverContent.modelTurn.parts;
             for (const part of parts) {
-              if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
-                const audioData = new Uint8Array(atob(part.inlineData.data).split('').map(char => char.charCodeAt(0)));
+              // Manejar datos de audio
+              if (part.audio?.data) {
+                console.log('🔊 Audio recibido');
+                const audioData = new Uint8Array(atob(part.audio.data).split('').map(char => char.charCodeAt(0)));
                 playAudioResponse(audioData);
               }
               
+              // Fallback para texto directo (por si acaso)
               if (part.text) {
+                console.log('📝 Texto directo recibido:', part.text);
                 addMessage(part.text, 'assistant');
               }
             }
