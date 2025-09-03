@@ -97,7 +97,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
       console.log('🔄 Conectando con Gemini Live API...');
       
-      // URL oficial de la documentación de Gemini Live API
+      // URL corregida con v1beta (no v1alpha)
       const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
       
       const websocket = new WebSocket(wsUrl);
@@ -108,6 +108,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         setupSent: false,
         send: (data: any) => {
           if (websocket.readyState === WebSocket.OPEN) {
+            console.log('📤 Enviando mensaje:', JSON.stringify(data, null, 2));
             websocket.send(JSON.stringify(data));
           }
         },
@@ -117,27 +118,20 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       };
 
       websocket.onopen = () => {
-        console.log('✅ Conexión establecida con Gemini Live API');
+        console.log('✅ Conexión WebSocket establecida');
         liveSession.connected = true;
         
-        // Enviar configuración inicial (requerido por la API)
+        // Setup message simplificado y corregido
         const setupMessage = {
           setup: {
             model: "models/gemini-2.0-flash-exp",
             generationConfig: {
-              responseModalities: ["AUDIO", "TEXT"],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: "Aoede"
-                  }
-                }
-              }
+              responseModalities: ["AUDIO", "TEXT"]
             }
           }
         };
         
-        console.log('📤 Enviando configuración:', JSON.stringify(setupMessage, null, 2));
+        console.log('📤 Enviando setup:', JSON.stringify(setupMessage, null, 2));
         liveSession.send(setupMessage);
         liveSession.setupSent = true;
       };
@@ -145,12 +139,26 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       websocket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
+          console.log('📨 Mensaje completo recibido:', JSON.stringify(message, null, 2));
           
           // Manejar confirmación de configuración
           if (message.setupComplete) {
+            console.log('✅ Setup completado exitosamente');
             addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
             setState('listening');
+            return;
+          }
+          
+          // Manejar errores de configuración
+          if (message.error) {
+            console.error('❌ Error en setup:', message.error);
+            toast({
+              title: "Error de configuración",
+              description: `Error: ${message.error.message || 'Configuración inválida'}`,
+              variant: "destructive"
+            });
+            setState('idle');
+            stopAudioProcessing();
             return;
           }
           
@@ -159,7 +167,6 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             const parts = message.serverContent.modelTurn.parts;
             for (const part of parts) {
               if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
-                // Convertir base64 a Uint8Array
                 const audioData = new Uint8Array(atob(part.inlineData.data).split('').map(char => char.charCodeAt(0)));
                 playAudioResponse(audioData);
               }
@@ -175,15 +182,15 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             setState('listening');
           }
         } catch (error) {
-          console.error('❌ Error parseando mensaje:', error);
+          console.error('❌ Error parseando mensaje:', error, 'Mensaje raw:', event.data);
         }
       };
 
       websocket.onerror = (error) => {
-        console.error('❌ Error en Gemini Live API:', error);
+        console.error('❌ Error WebSocket:', error);
         toast({
           title: "Error de conexión",
-          description: "Error en la conexión WebSocket",
+          description: "Error en la conexión WebSocket. Verifica tu API key.",
           variant: "destructive"
         });
         setState('idle');
@@ -191,11 +198,21 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       };
 
       websocket.onclose = (event) => {
-        console.log('🔌 Conexión cerrada:', event);
+        console.log('🔌 Conexión cerrada. Código:', event.code, 'Razón:', event.reason, 'WasClean:', event.wasClean);
         liveSession.connected = false;
-        if (liveSession.setupSent) {
+        
+        // Solo mostrar mensaje si el setup se había enviado correctamente
+        if (liveSession.setupSent && event.wasClean) {
           addMessage("✅ Conversación terminada", 'assistant');
+        } else if (!event.wasClean) {
+          console.error('❌ Conexión cerrada inesperadamente');
+          toast({
+            title: "Error de conexión",
+            description: `Conexión cerrada inesperadamente. Código: ${event.code}`,
+            variant: "destructive"
+          });
         }
+        
         setState('idle');
         stopAudioProcessing();
       };
