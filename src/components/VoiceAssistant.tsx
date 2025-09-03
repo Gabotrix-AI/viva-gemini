@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Mic, MicOff, Volume2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 // MODIFICACIÓN CRÍTICA: Se manejará la importación dinámicamente para evitar errores de constructor
+
 interface VoiceAssistantProps {}
 
 type AssistantState = 'idle' | 'listening' | 'processing' | 'speaking';
@@ -101,8 +102,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       const GoogleGenAIModule = await import('@google/genai');
       console.log('📦 Módulo Gemini disponibles:', Object.keys(GoogleGenAIModule));
       
-      // Usar destructuring y fallbacks para obtener GoogleGenerativeAI
-      const { GoogleGenerativeAI } = GoogleGenAIModule as any;
+      // CORRECCIÓN: Acceder a la exportación por defecto si GoogleGenerativeAI no está directamente disponible
+      const GoogleGenerativeAI = (GoogleGenAIModule as any).GoogleGenerativeAI || (GoogleGenAIModule as any).default.GoogleGenerativeAI || (GoogleGenAIModule as any).default;
       
       if (!GoogleGenerativeAI) {
         throw new Error(`GoogleGenerativeAI no disponible. Exports: ${Object.keys(GoogleGenAIModule).join(', ')}`);
