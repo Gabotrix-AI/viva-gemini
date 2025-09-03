@@ -107,8 +107,10 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         throw new Error(`GoogleGenAI o Live no disponibles. Exports: ${Object.keys(GoogleGenAIModule).join(', ')}`);
       }
       
-      // Crear cliente de Gemini
-      const client = new GoogleGenAI(GEMINI_API_KEY);
+      // Crear cliente de Gemini con la configuración correcta
+      const client = new GoogleGenAI({
+        apiKey: GEMINI_API_KEY
+      });
       
       // Crear sesión Live
       const liveSession = new Live({
