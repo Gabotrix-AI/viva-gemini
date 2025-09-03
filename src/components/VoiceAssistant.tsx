@@ -296,16 +296,17 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       }
       console.log('✅ Sesión de Gemini inicializada');
 
-      // Enviar audio procesado a Gemini
+      // Enviar audio procesado a Gemini - SOLO después de setup completo
       audioProcessorNodeRef.current.port.onmessage = (event) => {
-        if (liveSessionRef.current && liveSessionRef.current.connected) {
+        if (liveSessionRef.current && liveSessionRef.current.connected && liveSessionRef.current.setupComplete) {
           const pcmData = new Int16Array(event.data);
           
           // Verificar si hay audio real (no solo silencio)
-          const hasAudio = pcmData.some(sample => Math.abs(sample) > 100);
+          const hasAudio = pcmData.some(sample => Math.abs(sample) > 500); // Umbral más alto
           
           if (hasAudio) {
-            // Convertir PCM a base64 para el nuevo SDK
+            console.log('🎤 Enviando audio real detectado');
+            // Convertir PCM a base64 
             const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
             
             // Enviar audio usando el formato correcto para Gemini Live API
@@ -323,6 +324,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
               }
             });
           }
+        } else {
+          console.log('⚠️ Audio detectado pero setup no completo aún');
         }
       };
 
