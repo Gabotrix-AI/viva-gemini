@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Mic, MicOff, Volume2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -21,15 +21,16 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const { toast } = useToast();
   
-  const sessionRef = useRef<any>(null);
+  const sessionRef = useRef<any>(null); // Referencia a la sesión de Gemini Live
   const audioContextRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioBufferRef = useRef<Float32Array[]>([]);
-  const [reconnectAttempts, setReconnectAttempts] = useState(0);
-  const maxReconnectAttempts = 3;
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioProcessorNodeRef = useRef<AudioWorkletNode | null>(null);
+  const audioQueueRef = useRef<Uint8Array[]>([]); // Cola para chunks de audio de Gemini
+  const isPlayingRef = useRef(false); // Para controlar la reproducción de audio
 
-  const GEMINI_API_KEY = 'AIzaSyA-nn8ICl5G00uklIG6zvh5tAq4U5qQUqU';
+  // AVISO DE SEGURIDAD: Esta clave está hardcodeada para este ejercicio.
+  // En un entorno de producción, DEBES usar variables de entorno o un proxy seguro.
+  const GEMINI_API_KEY = 'AIzaSyA-nn8ICl5G00uklIG6zvh5tAq4U5qQUqU'; // ¡REEMPLAZA CON TU CLAVE REAL!
 
   const addMessage = useCallback((content: string, type: 'user' | 'assistant') => {
     const newMessage: Message = {
@@ -41,129 +42,44 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     setMessages(prev => [...prev, newMessage]);
   }, []);
 
-  const playAudioResponse = useCallback(async (audioData: string) => {
-    try {
-      setState('speaking');
-      
-      // Decodificar base64 a ArrayBuffer
-      const binaryString = atob(audioData);
-      const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      
-      // Crear contexto de audio para decodificar
-      const audioContext = new AudioContext();
-      const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
-      
-      // Reproducir usando Web Audio API
-      const source = audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContext.destination);
-      
-      source.onended = () => {
-        console.log('✅ Audio de Gemini terminado');
-        setState('listening');
-        audioContext.close();
-      };
-      
-      console.log('🔊 Reproduciendo respuesta de Gemini...');
-      source.start();
-      addMessage("🔊 Gemini está respondiendo", 'assistant');
-      
-    } catch (error) {
-      console.error('❌ Error reproduciendo audio:', error);
-      setState('listening');
-      addMessage("❌ Error reproduciendo respuesta de audio", 'assistant');
-    }
-  }, [addMessage]);
-
-  // Buffer de audio para acumular datos antes de enviar
-  const processAudioBuffer = useCallback(() => {
-    if (audioBufferRef.current.length === 0 || !sessionRef.current) {
-      console.log('⚠️ No hay buffer o sesión disponible');
+  const playAudioResponse = useCallback(async (audioData: Uint8Array) => {
+    if (!audioContextRef.current) {
+      console.error('❌ AudioContext no disponible para reproducción.');
       return;
     }
 
-    try {
-      // Validar que la sesión está disponible (SDK no tiene readyState como WebSocket)
-      if (!sessionRef.current) {
-        console.log('⚠️ Sesión no disponible');
-        return;
-      }
-      
-      // Combinar todos los chunks en un solo buffer
-      const totalLength = audioBufferRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
-      
-      // Optimizar: enviar chunks de tamaño adecuado (mínimo 0.1s = 1600 samples a 16kHz)
-      if (totalLength < 1600) {
-        console.log('⚠️ Buffer muy pequeño, esperando más datos');
-        return;
-      }
-      
-      // Limitar tamaño máximo para evitar problemas de memoria
-      if (totalLength > 16000) { // máximo 1 segundo de audio
-        console.log('⚠️ Buffer muy grande, tomando solo 1 segundo');
-        audioBufferRef.current = audioBufferRef.current.slice(0, Math.ceil(16000 / 4096));
-      }
-      
-      const combinedBuffer = new Float32Array(totalLength);
-      let offset = 0;
-      for (const chunk of audioBufferRef.current) {
-        combinedBuffer.set(chunk, offset);
-        offset += chunk.length;
-      }
+    audioQueueRef.current.push(audioData);
+    if (!isPlayingRef.current) {
+      isPlayingRef.current = true;
+      playNextAudioChunk();
+    }
+  }, []);
 
-      // Convertir a PCM 16-bit con mejor calidad
-      const pcmData = new Int16Array(combinedBuffer.length);
-      for (let i = 0; i < combinedBuffer.length; i++) {
-        // Aplicar clipping suave para evitar distorsión
-        const sample = combinedBuffer[i];
-        pcmData[i] = Math.max(-32768, Math.min(32767, Math.round(sample * 32767)));
+  const playNextAudioChunk = useCallback(async () => {
+    if (audioQueueRef.current.length > 0 && audioContextRef.current) {
+      const audioData = audioQueueRef.current.shift();
+      if (!audioData) return; // Asegurarse de que hay datos
+
+      try {
+        const audioBuffer = await audioContextRef.current.decodeAudioData(audioData.buffer);
+        const source = audioContextRef.current.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioContextRef.current.destination);
+        
+        source.onended = () => {
+          // Cuando un chunk termina, reproducir el siguiente
+          playNextAudioChunk();
+        };
+        source.start(0);
+        setState('speaking');
+      } catch (error) {
+        console.error('❌ Error decodificando/reproduciendo audio:', error);
+        isPlayingRef.current = false; // Detener reproducción si hay error
+        setState('listening'); // Volver a escuchar
       }
-
-      // Convertir a base64 de manera más robusta para chunks grandes
-      const uint8Array = new Uint8Array(pcmData.buffer);
-      let base64Audio = '';
-      
-      // Procesar en chunks para evitar stack overflow con arrays grandes
-      const chunkSize = 8192;
-      for (let i = 0; i < uint8Array.length; i += chunkSize) {
-        const chunk = uint8Array.slice(i, i + chunkSize);
-        base64Audio += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
-      }
-
-      // CORRECCIÓN CRÍTICA: Usar formato SDK correcto, no WebSocket crudo
-      const audioPart = {
-        inlineData: { 
-          data: base64Audio, 
-          mimeType: "audio/pcm" // SDK maneja la tasa internamente
-        }
-      };
-
-      // Validar datos antes del envío
-      if (!base64Audio || base64Audio.length === 0) {
-        console.log('⚠️ Audio base64 vacío, saltando envío');
-        audioBufferRef.current = [];
-        return;
-      }
-
-      console.log('📤 Enviando parte de audio:', { 
-        mimeType: audioPart.inlineData.mimeType,
-        dataLength: base64Audio.length 
-      });
-      
-      // El SDK espera un array de partes de contenido
-      sessionRef.current.send([audioPart]);
-
-      console.log(`📤 Enviado chunk de audio: ${combinedBuffer.length} samples (${base64Audio.length} bytes base64)`);
-      
-      // Limpiar buffer
-      audioBufferRef.current = [];
-      
-    } catch (error) {
-      console.error('❌ Error enviando audio:', error);
-      // No limpiar buffer en caso de error temporal
+    } else {
+      isPlayingRef.current = false;
+      setState('listening'); // Volver a escuchar cuando la cola está vacía
     }
   }, []);
 
@@ -179,7 +95,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       const model = 'gemini-2.0-flash-live-001';
       const config = {
         responseModalities: [Modality.AUDIO, Modality.TEXT],
-        systemInstruction: "Eres un asistente de voz amigable que habla en español. Responde de manera concisa y natural con audio cuando sea posible."
+        systemInstruction: "Eres un asistente de voz amigable y servicial que habla en español. Responde de manera concisa y natural con audio cuando sea posible."
       };
       
       console.log('🔄 Conectando con Gemini Live API...');
@@ -191,6 +107,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           onopen: () => {
             console.log('✅ Conexión establecida con Gemini Live API');
             addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
+            setState('listening');
           },
           onmessage: (message) => {
             console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
@@ -201,9 +118,15 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
                 const parts = message.serverContent.modelTurn.parts;
                 
                 for (const part of parts) {
-                  if (part.inlineData?.mimeType?.includes('audio')) {
+                  if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
                     console.log('🎵 Audio recibido de Gemini');
-                    playAudioResponse(part.inlineData.data);
+                    // Decodificar base64 a Uint8Array
+                    const binaryString = atob(part.inlineData.data);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                      bytes[i] = binaryString.charCodeAt(i);
+                    }
+                    playAudioResponse(bytes);
                   }
                   
                   if (part.text) {
@@ -216,24 +139,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
               // Verificar si el turno está completo
               if (message.serverContent?.turnComplete) {
                 console.log('✅ Turno completado');
-                setState('listening'); // Volver a listening después de completar
-              }
-              
-              // Manejar tipos de mensaje específicos
-              if ((message as any).type === 'serverContent') {
-                console.log('📨 Contenido del servidor:', message);
-              }
-              
-              // Manejar respuesta de audio directo (fallback)
-              if ((message as any).audio?.data) {
-                console.log('🎵 Audio directo detectado');
-                playAudioResponse((message as any).audio.data);
-              }
-              
-              // Manejar texto directo (fallback)
-              if ((message as any).text && typeof (message as any).text === 'string') {
-                console.log('💬 Texto directo:', (message as any).text);
-                addMessage((message as any).text, 'assistant');
+                // El estado se gestiona por playNextAudioChunk para evitar interrupciones
               }
               
             } catch (parseError) {
@@ -248,41 +154,17 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
               variant: "destructive"
             });
             setState('idle');
+            stopAudioProcessing();
           },
           onclose: (event) => {
             console.log('🔌 Conexión cerrada:', event);
-            console.log('Código de cierre:', event.code, 'Razón:', event.reason);
-            
-            if (event.code === 1007) {
-              console.error('❌ Error 1007 - Bug conocido de Google Gemini Live API');
-              addMessage("⚠️ Error conocido del servidor (Bug de Google). Intentando reconectar...", 'assistant');
-              
-              // Intentar reconexión automática si no se han agotado los intentos
-              if (reconnectAttempts < maxReconnectAttempts) {
-                console.log(`🔄 Intentando reconexión automática ${reconnectAttempts + 1}/${maxReconnectAttempts}`);
-                setReconnectAttempts(prev => prev + 1);
-                
-                // Reconectar después de 2 segundos
-                reconnectTimeoutRef.current = setTimeout(() => {
-                  if (state === 'listening') {
-                    console.log('🔄 Reconectando automáticamente...');
-                    startListening();
-                  }
-                }, 2000);
-              } else {
-                addMessage("❌ Máximo de reintentos alcanzado. Este es un bug conocido de Google Gemini Live API.", 'assistant');
-                setState('idle');
-                setReconnectAttempts(0);
-              }
-            } else if (event.code === 1000) {
+            if (event.code === 1000) {
               addMessage("✅ Conexión cerrada normalmente", 'assistant');
-              setState('idle');
-              setReconnectAttempts(0);
             } else {
               addMessage(`⚠️ Conexión cerrada (código: ${event.code})`, 'assistant');
-              setState('idle');
-              setReconnectAttempts(0);
             }
+            setState('idle');
+            stopAudioProcessing();
           }
         }
       });
@@ -290,36 +172,33 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       sessionRef.current = session;
       return session;
       
-    } catch (error) {
-      console.error('❌ Error inicializando Gemini:', error);
+    } catch (error: any) {
+      console.error('❌ Error inicializando Gemini Live API:', error);
       toast({
         title: "Error de inicialización",
         description: `No se pudo conectar: ${error.message}`,
         variant: "destructive"
       });
+      setState('idle');
       return null;
     }
-  }, [toast, addMessage, playAudioResponse, processAudioBuffer]);
+  }, [addMessage, playAudioResponse, toast, GEMINI_API_KEY]);
 
   const startListening = useCallback(async () => {
     try {
-      // Limpiar timeout de reconexión si existe
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
+      if (state !== 'idle') return; // Evitar iniciar si ya está activo
+
+      setState('processing'); // Estado intermedio mientras se inicializa
+
+      // Inicializar AudioContext si no existe
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+        // Cargar AudioWorklet module
+        await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
       }
 
-      setState('listening');
-      
-      // Inicializar sesión de Gemini
-      const session = await initializeGeminiSession();
-      if (!session) {
-        setState('idle');
-        return;
-      }
-      
-      // Obtener acceso al micrófono con configuración optimizada
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      // Obtener acceso al micrófono
+      mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: 16000,
           channelCount: 1,
@@ -328,49 +207,39 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           autoGainControl: true
         }
       });
+      addMessage("🎤 Micrófono activado", 'user');
+
+      // Crear fuente de audio desde el micrófono
+      const source = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
       
-      streamRef.current = stream;
-      addMessage("🎤 Micrófono activado - Habla ahora", 'user');
-      
-      // Crear contexto de audio
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      audioContextRef.current = audioContext;
-      
-      const source = audioContext.createMediaStreamSource(stream);
-      
-      // Usar procesador simple con buffer acumulativo
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      
-      processor.onaudioprocess = (event) => {
-        // Verificar que la sesión sigue disponible
-        if (!sessionRef.current) return;
-        
-        const inputBuffer = event.inputBuffer;
-        const inputData = inputBuffer.getChannelData(0);
-        
-        // Acumular en buffer
-        audioBufferRef.current.push(new Float32Array(inputData));
-        
-        // Optimizar frecuencia: Enviar cada 0.5 segundos (8 chunks de 4096 samples a 16kHz)
-        if (audioBufferRef.current.length >= 8) {
-          processAudioBuffer();
+      // Crear AudioWorkletNode
+      audioProcessorNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
+      source.connect(audioProcessorNodeRef.current);
+      audioProcessorNodeRef.current.connect(audioContextRef.current.destination); // Conectar para que el usuario se escuche a sí mismo (opcional)
+
+      // Inicializar sesión de Gemini Live API
+      const session = await initializeGeminiSession();
+      if (!session) {
+        stopAudioProcessing();
+        return;
+      }
+
+      // Enviar audio procesado a Gemini
+      audioProcessorNodeRef.current.port.onmessage = (event) => {
+        if (sessionRef.current && sessionRef.current.state !== 'closed') {
+          const pcmData = new Int16Array(event.data);
+          const uint8Array = new Uint8Array(pcmData.buffer);
+          const audioPart = {
+            inlineData: {
+              data: btoa(String.fromCharCode(...uint8Array)),
+              mimeType: 'audio/pcm;rate=16000',
+            },
+          };
+          sessionRef.current.send([audioPart]);
         }
       };
-      
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-      
-      // Procesar buffer cada 0.5 segundo como backup
-      const intervalId = setInterval(() => {
-        if (audioBufferRef.current.length > 0 && sessionRef.current) {
-          processAudioBuffer();
-        }
-      }, 500);
-      
-      // Guardar intervalo para limpieza posterior
-      (processor as any).intervalId = intervalId;
-      
-    } catch (error) {
+
+    } catch (error: any) {
       console.error('❌ Error iniciando grabación:', error);
       toast({
         title: "Error de micrófono",
@@ -378,60 +247,45 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         variant: "destructive"
       });
       setState('idle');
+      stopAudioProcessing();
     }
-  }, [initializeGeminiSession, addMessage, toast, processAudioBuffer, state]);
+  }, [addMessage, initializeGeminiSession, toast, state]);
 
-  const stopListening = useCallback(() => {
-    setState('idle');
-    setReconnectAttempts(0); // Reset intentos de reconexión
-    
-    // Limpiar timeout de reconexión
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
+  const stopAudioProcessing = useCallback(() => {
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
     }
-    
-    // Enviar último chunk si existe
-    if (audioBufferRef.current.length > 0) {
-      processAudioBuffer();
+    if (audioProcessorNodeRef.current) {
+      audioProcessorNodeRef.current.disconnect();
+      audioProcessorNodeRef.current = null;
     }
-    
-    // Cerrar sesión de Gemini
     if (sessionRef.current) {
       try {
         sessionRef.current.close();
-        sessionRef.current = null;
-        console.log('🔌 Sesión de Gemini cerrada');
       } catch (error) {
-        console.error('Error cerrando sesión:', error);
+        console.error('Error cerrando sesión de Gemini:', error);
       }
+      sessionRef.current = null;
     }
-    
-    // Limpiar stream de audio
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    
-    // Limpiar contexto de audio
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    
-    // Limpiar buffer
-    audioBufferRef.current = [];
-    
-    addMessage("🛑 Conversación finalizada", 'user');
-  }, [addMessage, processAudioBuffer]);
+    // No cerrar AudioContext aquí para permitir reproducción de audio en cola
+    // if (audioContextRef.current) {
+    //   audioContextRef.current.close();
+    //   audioContextRef.current = null;
+    // }
+    isPlayingRef.current = false;
+    audioQueueRef.current = [];
+  }, []);
 
   const handleToggleConversation = useCallback(() => {
     if (state === 'idle') {
       startListening();
-    } else if (state === 'listening') {
-      stopListening();
+    } else {
+      stopAudioProcessing();
+      setState('idle');
+      addMessage("🛑 Conversación finalizada", 'user');
     }
-  }, [state, startListening, stopListening]);
+  }, [state, startListening, stopAudioProcessing, addMessage]);
 
   const getStatusConfig = (currentState: AssistantState) => {
     switch (currentState) {
@@ -455,7 +309,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         };
       default:
         return { 
-          text: 'Listo para hablar', 
+          text: 'Iniciar Conversación', 
           icon: <Mic className="w-4 h-4" />, 
           className: 'status-indicator' 
         };
@@ -465,86 +319,40 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   const statusConfig = getStatusConfig(state);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 space-y-8">
-      {/* Header */}
-      <div className="text-center space-y-4 animate-float">
-        <h1 className="text-5xl font-bold bg-gradient-to-r from-purple-600 to-blue-500 bg-clip-text text-transparent">
-          Asistente de Voz
-        </h1>
-        <h2 className="text-2xl font-medium text-muted-foreground">
-          Powered by Gemini AI
-        </h2>
-        <p className="text-lg text-muted-foreground max-w-2xl">
-          Haz clic en el botón para comenzar a hablar. El asistente te responderá en tiempo real.
-        </p>
-        <div className="bg-yellow-100 dark:bg-yellow-900/20 p-3 rounded-lg text-sm text-yellow-800 dark:text-yellow-200 max-w-2xl">
-          ⚠️ <strong>Nota:</strong> Existe un bug conocido en la API de Google Gemini Live que puede causar desconexiones. 
-          Se implementó reconexión automática como solución temporal.
-        </div>
-      </div>
-
-      {/* Status Indicator */}
-      <Badge className={statusConfig.className}>
-        {statusConfig.icon}
-        {statusConfig.text}
-      </Badge>
-
-      {/* Main Voice Button */}
-      <div className="relative">
-        <Button
-          onClick={handleToggleConversation}
-          disabled={state === 'processing' || state === 'speaking'}
-          size="lg"
-          className={`
-            voice-button w-32 h-32 rounded-full text-xl font-semibold
-            bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-700 hover:to-blue-600
-            ${state === 'listening' ? 'listening' : ''}
-          `}
-        >
-          {state === 'listening' ? (
-            <MicOff className="w-12 h-12" />
-          ) : state === 'processing' || state === 'speaking' ? (
-            <Loader2 className="w-12 h-12 animate-spin" />
-          ) : (
-            <Mic className="w-12 h-12" />
-          )}
-        </Button>
-      </div>
-
-      {/* Button Label */}
-      <p className="text-lg font-medium text-muted-foreground">
-        {state === 'idle' ? 'Iniciar Conversación' : 
-         state === 'listening' ? 'Detener Conversación' :
-         state === 'processing' ? 'Procesando...' : 'Hablando...'}
-      </p>
-
-      {/* Messages/Transcription Area */}
-      {messages.length > 0 && (
-        <Card className="glass-card w-full max-w-2xl p-6">
-          <h3 className="text-xl font-semibold mb-4">Conversación</h3>
-          <div className="transcription-area space-y-4">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`p-3 rounded-lg ${
-                  message.type === 'user' 
-                    ? 'bg-primary/10 text-primary border-l-4 border-primary' 
-                    : 'bg-secondary/50 text-secondary-foreground border-l-4 border-secondary'
-                }`}
-              >
-                <div className="flex justify-between items-start">
-                  <p className="text-sm">
-                    <strong>{message.type === 'user' ? 'Usuario:' : 'Asistente:'}</strong> {message.content}
-                  </p>
-                  <span className="text-xs text-muted-foreground ml-2">
-                    {message.timestamp.toLocaleTimeString()}
-                  </span>
-                </div>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
+      <Card className="w-full max-w-md shadow-lg rounded-lg">
+        <CardHeader className="text-center">
+          <CardTitle className="text-2xl font-bold">Asistente de Voz con Gemini AI</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col items-center space-y-6">
+          <Button 
+            onClick={handleToggleConversation} 
+            className={`w-48 h-48 rounded-full flex items-center justify-center text-white text-lg font-semibold shadow-xl 
+              ${state === 'listening' ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'}
+            `}
+          >
+            {state === 'idle' ? 'Iniciar Conversación' : 'Detener Conversación'}
+          </Button>
+          <Badge 
+            variant="outline" 
+            className={`px-4 py-2 text-md flex items-center space-x-2 
+              ${statusConfig.className}
+            `}
+          >
+            {statusConfig.icon}
+            <span>{statusConfig.text}</span>
+          </Badge>
+          <div className="w-full h-64 overflow-y-auto border rounded-md p-4 bg-muted text-muted-foreground">
+            {messages.map((msg) => (
+              <div key={msg.id} className={`mb-2 ${msg.type === 'user' ? 'text-right' : 'text-left'}`}>
+                <span className={`inline-block p-2 rounded-lg ${msg.type === 'user' ? 'bg-primary/10 text-primary' : 'bg-secondary/50 text-secondary-foreground'}`}>
+                  {msg.content}
+                </span>
               </div>
             ))}
           </div>
-        </Card>
-      )}
+        </CardContent>
+      </Card>
     </div>
   );
 };
