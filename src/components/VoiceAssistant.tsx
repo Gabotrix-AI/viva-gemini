@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -226,16 +226,24 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
       // Enviar audio procesado a Gemini
       audioProcessorNodeRef.current.port.onmessage = (event) => {
-        if (sessionRef.current && sessionRef.current.state !== 'closed') {
+        if (sessionRef.current) {
           const pcmData = new Int16Array(event.data);
           const uint8Array = new Uint8Array(pcmData.buffer);
+          
+          // Usar el método correcto del SDK para enviar audio
           const audioPart = {
             inlineData: {
               data: btoa(String.fromCharCode(...uint8Array)),
               mimeType: 'audio/pcm;rate=16000',
             },
           };
-          sessionRef.current.send([audioPart]);
+          
+          // Enviar usando el método live
+          try {
+            sessionRef.current.receive([audioPart]);
+          } catch (error) {
+            console.error('Error enviando audio:', error);
+          }
         }
       };
 
@@ -319,7 +327,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   const statusConfig = getStatusConfig(state);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 p-4">
       <Card className="w-full max-w-md shadow-lg rounded-lg">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl font-bold">Asistente de Voz con Gemini AI</CardTitle>
@@ -328,7 +336,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           <Button 
             onClick={handleToggleConversation} 
             className={`w-48 h-48 rounded-full flex items-center justify-center text-white text-lg font-semibold shadow-xl 
-              ${state === 'listening' ? 'bg-destructive hover:bg-destructive/90' : 'bg-primary hover:bg-primary/90'}
+              ${state === 'listening' ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}
             `}
           >
             {state === 'idle' ? 'Iniciar Conversación' : 'Detener Conversación'}
@@ -342,10 +350,10 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             {statusConfig.icon}
             <span>{statusConfig.text}</span>
           </Badge>
-          <div className="w-full h-64 overflow-y-auto border rounded-md p-4 bg-muted text-muted-foreground">
+          <div className="w-full h-64 overflow-y-auto border rounded-md p-4 bg-gray-50 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
             {messages.map((msg) => (
               <div key={msg.id} className={`mb-2 ${msg.type === 'user' ? 'text-right' : 'text-left'}`}>
-                <span className={`inline-block p-2 rounded-lg ${msg.type === 'user' ? 'bg-primary/10 text-primary' : 'bg-secondary/50 text-secondary-foreground'}`}>
+                <span className={`inline-block p-2 rounded-lg ${msg.type === 'user' ? 'bg-blue-100 dark:bg-blue-800' : 'bg-green-100 dark:bg-green-800'}`}>
                   {msg.content}
                 </span>
               </div>
