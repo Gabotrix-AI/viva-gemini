@@ -97,14 +97,15 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
       console.log('🔄 Conectando con Gemini Live API...');
       
-      // Usar WebSocket directo para Gemini Live API
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
+      // URL oficial de la documentación de Gemini Live API
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
       
       const websocket = new WebSocket(wsUrl);
       
       const liveSession = {
         ws: websocket,
         connected: false,
+        setupSent: false,
         send: (data: any) => {
           if (websocket.readyState === WebSocket.OPEN) {
             websocket.send(JSON.stringify(data));
@@ -118,18 +119,27 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       websocket.onopen = () => {
         console.log('✅ Conexión establecida con Gemini Live API');
         liveSession.connected = true;
-        addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
-        setState('listening');
         
-        // Enviar configuración inicial
-        websocket.send(JSON.stringify({
+        // Enviar configuración inicial (requerido por la API)
+        const setupMessage = {
           setup: {
             model: "models/gemini-2.0-flash-exp",
-            generation_config: {
-              response_modalities: ["AUDIO", "TEXT"]
+            generationConfig: {
+              responseModalities: ["AUDIO", "TEXT"],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: "Aoede"
+                  }
+                }
+              }
             }
           }
-        }));
+        };
+        
+        console.log('📤 Enviando configuración:', JSON.stringify(setupMessage, null, 2));
+        liveSession.send(setupMessage);
+        liveSession.setupSent = true;
       };
 
       websocket.onmessage = (event) => {
@@ -137,6 +147,14 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           const message = JSON.parse(event.data);
           console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
           
+          // Manejar confirmación de configuración
+          if (message.setupComplete) {
+            addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
+            setState('listening');
+            return;
+          }
+          
+          // Manejar contenido del servidor
           if (message.serverContent?.modelTurn?.parts) {
             const parts = message.serverContent.modelTurn.parts;
             for (const part of parts) {
@@ -175,7 +193,9 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       websocket.onclose = (event) => {
         console.log('🔌 Conexión cerrada:', event);
         liveSession.connected = false;
-        addMessage("✅ Conversación terminada", 'assistant');
+        if (liveSession.setupSent) {
+          addMessage("✅ Conversación terminada", 'assistant');
+        }
         setState('idle');
         stopAudioProcessing();
       };
@@ -243,18 +263,18 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           // Convertir PCM a base64 para el nuevo SDK
           const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
           
-          // Enviar audio usando WebSocket directo
+          // Enviar audio usando el formato oficial de la API
           liveSessionRef.current.send({
             clientContent: {
               turns: [{
                 parts: [{
                   inlineData: {
-                    mimeType: "audio/pcm;rate=16000;channels=1",
+                    mimeType: "audio/pcm;rate=16000",
                     data: base64Audio
                   }
                 }]
               }],
-              turnComplete: true
+              turnComplete: false
             }
           });
         }
