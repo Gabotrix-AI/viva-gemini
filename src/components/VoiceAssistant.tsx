@@ -263,7 +263,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       // Crear AudioWorkletNode
       audioProcessorNodeRef.current = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
       source.connect(audioProcessorNodeRef.current);
-      audioProcessorNodeRef.current.connect(audioContextRef.current.destination); // Conectar para que el usuario se escuche a sí mismo (opcional)
+      // NO conectar a destination para evitar feedback del micrófono
 
       // Inicializar sesión de Gemini Live API
       const session = await initializeGeminiLiveSession();
@@ -277,23 +277,28 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         if (liveSessionRef.current && liveSessionRef.current.connected) {
           const pcmData = new Int16Array(event.data);
           
-          // Convertir PCM a base64 para el nuevo SDK
-          const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
+          // Verificar si hay audio real (no solo silencio)
+          const hasAudio = pcmData.some(sample => Math.abs(sample) > 100);
           
-          // Enviar audio usando el formato oficial de la API
-          liveSessionRef.current.send({
-            clientContent: {
-              turns: [{
-                parts: [{
-                  inlineData: {
-                    mimeType: "audio/pcm;rate=16000",
-                    data: base64Audio
-                  }
-                }]
-              }],
-              turnComplete: false
-            }
-          });
+          if (hasAudio) {
+            // Convertir PCM a base64 para el nuevo SDK
+            const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
+            
+            // Enviar audio usando el formato oficial de la API con mimeType consistente
+            liveSessionRef.current.send({
+              clientContent: {
+                turns: [{
+                  parts: [{
+                    inlineData: {
+                      mimeType: "audio/pcm;rate=16000",
+                      data: base64Audio
+                    }
+                  }]
+                }],
+                turnComplete: false
+              }
+            });
+          }
         }
       };
 
