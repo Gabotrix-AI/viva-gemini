@@ -122,21 +122,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         console.log('✅ Conexión WebSocket establecida');
         liveSession.connected = true;
         
-        // Setup message corregido - outputAudioTranscription va fuera de generationConfig
+        // Setup message mínimo que realmente funciona
         const setupMessage = {
           setup: {
             model: "models/gemini-2.0-flash-exp",
             generationConfig: {
-              responseModalities: ["AUDIO"], // Solo AUDIO, no TEXT
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: "Aoede"
-                  }
-                }
-              }
-            },
-            outputAudioTranscription: {} // Este campo va fuera de generationConfig
+              responseModalities: ["AUDIO"]
+            }
           }
         };
         
@@ -182,28 +174,15 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
             return;
           }
           
-          // Manejar transcripción de texto del audio
-          if (message.serverContent?.outputTranscription?.text) {
-            const transcriptionText = message.serverContent.outputTranscription.text;
-            console.log('📝 Transcripción recibida:', transcriptionText);
-            addMessage(transcriptionText, 'assistant');
-          }
-          
-          // Manejar contenido del servidor (audio y otras partes)
+          // Manejar contenido del servidor (solo audio por ahora)
           if (message.serverContent?.modelTurn?.parts) {
             const parts = message.serverContent.modelTurn.parts;
             for (const part of parts) {
               // Manejar datos de audio
-              if (part.audio?.data) {
+              if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
                 console.log('🔊 Audio recibido');
-                const audioData = new Uint8Array(atob(part.audio.data).split('').map(char => char.charCodeAt(0)));
+                const audioData = new Uint8Array(atob(part.inlineData.data).split('').map(char => char.charCodeAt(0)));
                 playAudioResponse(audioData);
-              }
-              
-              // Fallback para texto directo (por si acaso)
-              if (part.text) {
-                console.log('📝 Texto directo recibido:', part.text);
-                addMessage(part.text, 'assistant');
               }
             }
           }
