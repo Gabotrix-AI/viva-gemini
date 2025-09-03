@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Mic, Volume2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { getLiveGenerativeModel, ResponseModality, startAudioConversation } from '@firebase/ai';
+import { ai } from '@/lib/firebase';
 
 interface VoiceAssistantProps {}
 
@@ -21,14 +23,8 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const { toast } = useToast();
   
-  const websocketRef = useRef<WebSocket | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioProcessorRef = useRef<AudioWorkletNode | null>(null);
-  const isConnectedRef = useRef(false);
-
-  // API Key - reemplazar con tu clave real
-  const GEMINI_API_KEY = 'AIzaSyCO4XPD1q024prR1VRNd6xAg-1igH07TTw';
+  const sessionRef = useRef<any>(null);
+  const audioConversationControllerRef = useRef<any>(null);
 
   const addMessage = useCallback((content: string, type: 'user' | 'assistant') => {
     const newMessage: Message = {
@@ -40,257 +36,114 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
     setMessages(prev => [...prev, newMessage]);
   }, []);
 
-  const playAudioResponse = useCallback(async (audioData: Uint8Array) => {
+  const initializeGeminiLive = useCallback(async () => {
     try {
-      if (!audioContextRef.current) return;
-      
-      const audioBuffer = await audioContextRef.current.decodeAudioData(audioData.buffer);
-      const source = audioContextRef.current.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContextRef.current.destination);
-      
-      setState('speaking');
-      source.onended = () => setState('listening');
-      source.start(0);
-    } catch (error) {
-      console.error('Error reproduciendo audio:', error);
-    }
-  }, []);
+      console.log('🚀 Inicializando Gemini Live API con Firebase SDK');
+      setState('processing');
 
-  const initializeWebSocket = useCallback(() => {
-    const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${GEMINI_API_KEY}`;
-    
-    websocketRef.current = new WebSocket(wsUrl);
-    
-    websocketRef.current.onopen = () => {
-      console.log('🔗 WebSocket conectado');
-      isConnectedRef.current = true;
-      
-      // Enviar setup básico
-      const setupMessage = {
-        setup: {
-          model: "models/gemini-2.0-flash-exp",
-          generationConfig: {
-            responseModalities: ["AUDIO"]
-          }
-        }
-      };
-      
-      console.log('📤 Enviando setup:', setupMessage);
-      websocketRef.current?.send(JSON.stringify(setupMessage));
-      
-      // Marcar como listo después de 1 segundo
-      setTimeout(() => {
-        addMessage("✅ Conexión establecida - Puedes empezar a hablar", 'assistant');
-        setState('listening');
-      }, 1000);
-    };
-    
-    websocketRef.current.onmessage = async (event) => {
-      try {
-        console.log('📨 Tipo de dato recibido:', typeof event.data, event.data.constructor.name);
-        
-        // Manejar respuestas como Blob (datos binarios)
-        if (event.data instanceof Blob) {
-          console.log('📦 Recibido Blob de tamaño:', event.data.size);
-          
-          // Convertir Blob a texto para ver si es JSON
-          const text = await event.data.text();
-          console.log('📄 Contenido del Blob:', text.substring(0, 200) + '...');
-          
-          try {
-            const message = JSON.parse(text);
-            console.log('✅ Blob contenía JSON válido:', JSON.stringify(message, null, 2));
-            handleGeminiMessage(message);
-          } catch (jsonError) {
-            console.log('⚠️ Blob no es JSON, probablemente es audio binario');
-            // Si no es JSON, podría ser audio directo
-            const audioData = new Uint8Array(await event.data.arrayBuffer());
-            console.log('🔊 Intentando reproducir como audio, tamaño:', audioData.length);
-            playAudioResponse(audioData);
-          }
-        } 
-        // Manejar respuestas como texto/JSON normal
-        else if (typeof event.data === 'string') {
-          console.log('📝 Recibido texto:', event.data.substring(0, 200) + '...');
-          const message = JSON.parse(event.data);
-          console.log('✅ JSON parseado exitosamente:', JSON.stringify(message, null, 2));
-          handleGeminiMessage(message);
-        }
-        // Manejar otros tipos de datos
-        else {
-          console.log('❓ Tipo de dato desconocido:', typeof event.data);
-        }
-        
-      } catch (error) {
-        console.error('❌ Error procesando mensaje completo:', error);
-        console.log('🔍 Datos originales:', event.data);
-      }
-    };
-    
-    // Función separada para manejar mensajes JSON de Gemini
-    const handleGeminiMessage = (message: any) => {
-      // Manejar respuestas de configuración
-      if (message.setupComplete) {
-        console.log('✅ Setup confirmado por Gemini');
-        return;
-      }
-      
-      // Manejar contenido del servidor
-      if (message.serverContent) {
-        console.log('🎯 Contenido del servidor recibido');
-        
-        // Buscar partes de audio
-        if (message.serverContent.modelTurn?.parts) {
-          for (const part of message.serverContent.modelTurn.parts) {
-            if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
-              console.log('🔊 Audio JSON recibido de Gemini');
-              const audioData = new Uint8Array(
-                atob(part.inlineData.data).split('').map(char => char.charCodeAt(0))
-              );
-              playAudioResponse(audioData);
+      // Crear el modelo Live con configuración de audio
+      const model = getLiveGenerativeModel(ai, {
+        model: "gemini-2.0-flash-live-preview-04-09",
+        generationConfig: {
+          responseModalities: [ResponseModality.AUDIO],
+        },
+      });
+
+      console.log('📱 Conectando sesión...');
+      const session = await model.connect();
+      sessionRef.current = session;
+
+      console.log('🎤 Iniciando conversación de audio...');
+      const audioController = await startAudioConversation(session);
+      audioConversationControllerRef.current = audioController;
+
+      setState('listening');
+      addMessage("✅ Gemini Live conectado - ¡Habla ahora!", 'assistant');
+
+      // Escuchar mensajes del servidor en background
+      (async () => {
+        try {
+          const messageStream = session.receive();
+          for await (const message of messageStream) {
+            console.log('📨 Mensaje recibido:', message);
+            
+            switch (message.type) {
+              case "serverContent":
+                if (message.turnComplete) {
+                  console.log('✅ Turno completado');
+                  setState('listening');
+                } else {
+                  // El audio se reproduce automáticamente por startAudioConversation
+                  if (message.modelTurn?.parts) {
+                    setState('speaking');
+                    const textParts = message.modelTurn.parts
+                      .filter((part: any) => part.text)
+                      .map((part: any) => part.text)
+                      .join('');
+                    
+                    if (textParts) {
+                      addMessage(textParts, 'assistant');
+                    }
+                  }
+                }
+                break;
+              case "toolCall":
+                console.log('🔧 Tool call:', message);
+                break;
+              case "toolCallCancellation":
+                console.log('❌ Tool call cancelado:', message);
+                break;
             }
           }
+        } catch (error: any) {
+          console.error('❌ Error en stream de mensajes:', error);
+          toast({
+            title: "Error",
+            description: "Error en la comunicación con Gemini",
+            variant: "destructive"
+          });
         }
-        
-        // Manejar transcripciones si las hay
-        if (message.serverContent.turnComplete) {
-          console.log('✅ Turno completado');
-          setState('listening');
-        }
-      }
-    };
-    
-    websocketRef.current.onerror = (error) => {
-      console.error('❌ Error WebSocket:', error);
+      })();
+
+    } catch (error: any) {
+      console.error('❌ Error inicializando Gemini Live:', error);
       toast({
-        title: "Error de conexión",
-        description: "Error en la conexión con Gemini",
+        title: "Error",
+        description: `Error al conectar: ${error.message}`,
         variant: "destructive"
       });
-    };
-    
-    websocketRef.current.onclose = (event) => {
-      console.log('🔌 WebSocket cerrado:', event.code, event.reason);
-      isConnectedRef.current = false;
       setState('idle');
-      if (event.code !== 1000) {
-        toast({
-          title: "Conexión perdida",
-          description: `Código: ${event.code}. ${event.reason || 'Conexión cerrada inesperadamente'}`,
-          variant: "destructive"
-        });
-      }
-    };
-  }, [addMessage, playAudioResponse, toast]);
+    }
+  }, [addMessage, toast]);
 
-  const setupAudio = useCallback(async () => {
+  const cleanup = useCallback(async () => {
     try {
-      // Configurar AudioContext
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: 16000
-      });
+      if (audioConversationControllerRef.current) {
+        console.log('🛑 Deteniendo conversación de audio...');
+        await audioConversationControllerRef.current.stop();
+        audioConversationControllerRef.current = null;
+      }
       
-      // Cargar AudioWorklet
-      await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
-      
-      // Obtener micrófono
-      mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true
-        }
-      });
-      
-      // Configurar procesamiento de audio
-      const source = audioContextRef.current.createMediaStreamSource(mediaStreamRef.current);
-      audioProcessorRef.current = new AudioWorkletNode(audioContextRef.current, 'audio-processor');
-      source.connect(audioProcessorRef.current);
-      
-      // Enviar audio a Gemini
-      audioProcessorRef.current.port.onmessage = (event) => {
-        if (!isConnectedRef.current || !websocketRef.current) return;
-        
-        const pcmData = new Int16Array(event.data);
-        const hasAudio = pcmData.some(sample => Math.abs(sample) > 1000);
-        
-        if (hasAudio) {
-          const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
-          
-          const audioMessage = {
-            clientContent: {
-              turns: [{
-                parts: [{
-                  inlineData: {
-                    mimeType: "audio/pcm;rate=16000;channels=1",
-                    data: base64Audio
-                  }
-                }]
-              }],
-              turnComplete: false
-            }
-          };
-          
-          websocketRef.current.send(JSON.stringify(audioMessage));
-        }
-      };
-      
+      if (sessionRef.current) {
+        console.log('🔌 Cerrando sesión...');
+        // La sesión se cierra automáticamente cuando se detiene la conversación
+        sessionRef.current = null;
+      }
     } catch (error) {
-      console.error('Error configurando audio:', error);
-      throw error;
+      console.error('Error en cleanup:', error);
     }
-  }, []);
-
-  const cleanup = useCallback(() => {
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      mediaStreamRef.current = null;
-    }
-    
-    if (audioProcessorRef.current) {
-      audioProcessorRef.current.disconnect();
-      audioProcessorRef.current = null;
-    }
-    
-    if (websocketRef.current) {
-      websocketRef.current.close();
-      websocketRef.current = null;
-    }
-    
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    
-    isConnectedRef.current = false;
   }, []);
 
   const handleToggleConversation = useCallback(async () => {
     if (state === 'idle') {
-      setState('processing');
-      
-      try {
-        await setupAudio();
-        initializeWebSocket();
-        addMessage("🎤 Micrófono activado", 'user');
-      } catch (error: any) {
-        console.error('Error iniciando conversación:', error);
-        toast({
-          title: "Error",
-          description: `No se pudo iniciar: ${error.message}`,
-          variant: "destructive"
-        });
-        setState('idle');
-        cleanup();
-      }
+      await initializeGeminiLive();
+      addMessage("🎤 Micrófono activado", 'user');
     } else {
-      cleanup();
+      await cleanup();
       setState('idle');
       addMessage("🛑 Conversación finalizada", 'user');
     }
-  }, [state, setupAudio, initializeWebSocket, addMessage, cleanup, toast]);
+  }, [state, initializeGeminiLive, cleanup, addMessage]);
 
   const getStatusConfig = (currentState: AssistantState) => {
     switch (currentState) {
