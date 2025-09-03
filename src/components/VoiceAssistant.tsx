@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Mic, MicOff, Volume2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-// MODIFICACIÓN CRÍTICA: Se manejará la importación dinámicamente para evitar errores de constructor
 
 interface VoiceAssistantProps {}
 
@@ -96,50 +95,45 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         return null;
       }
 
-      // MODIFICACIÓN CRÍTICA: Importación dinámica de comodín para evitar constructor error
       console.log('🔄 Conectando con Gemini Live API...');
       
       const GoogleGenAIModule = await import('@google/genai');
       console.log('📦 Módulo Gemini disponibles:', Object.keys(GoogleGenAIModule));
       
-      // CORRECCIÓN: Acceder a la exportación por defecto si GoogleGenerativeAI no está directamente disponible
-      const GoogleGenerativeAI = (GoogleGenAIModule as any).GoogleGenerativeAI || (GoogleGenAIModule as any).default.GoogleGenerativeAI || (GoogleGenAIModule as any).default;
+      // CORRECCIÓN CRÍTICA: Usar Client y Live del nuevo SDK @google/genai
+      const { Client, Live } = GoogleGenAIModule as any;
       
-      if (!GoogleGenerativeAI) {
-        throw new Error(`GoogleGenerativeAI no disponible. Exports: ${Object.keys(GoogleGenAIModule).join(', ')}`);
+      if (!Client || !Live) {
+        throw new Error(`Client o Live no disponibles. Exports: ${Object.keys(GoogleGenAIModule).join(', ')}`);
       }
       
-      const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-      
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash-preview-native-audio-dialog',
+      // Crear cliente de Gemini
+      const client = new Client({
+        apiKey: GEMINI_API_KEY,
       });
       
-      // LA CORRECCIÓN CRÍTICA: La forma correcta de obtener la LiveSession
-      const liveSession = await model.startChat({
-        history: [],
-        generationConfig: {
-          responseMimeType: 'application/json',
+      // Crear sesión Live
+      const liveSession = new Live({
+        client,
+        model: 'gemini-2.5-flash-preview-native-audio-dialog',
+        config: {
+          generation: {
+            responseModalities: ['audio', 'text'],
+          },
+          speech: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: 'Puck',
+              },
+            },
+          },
         },
-        safetySettings: [],
-      }).then((chat: any) => chat.getLiveSession({
-        audioInputConfig: {
-          sampleRateHz: 16000,
-          encoding: 'LINEAR16',
-        },
-        audioOutputConfig: {
-          sampleRateHz: 24000,
-          encoding: 'LINEAR16',
-        },
-        responseModalities: ['AUDIO', 'TEXT'],
         systemInstruction: {
-          parts: [
-            {
-              text: "Eres un asistente de voz amigable y servicial que habla en español. Responde de manera concisa y natural con audio cuando sea posible."
-            }
-          ]
+          parts: [{
+            text: "Eres un asistente de voz amigable y servicial que habla en español. Responde de manera concisa y natural con audio cuando sea posible."
+          }]
         }
-      }));
+      });
 
       liveSession.on('open', () => {
         console.log('✅ Conexión establecida con Gemini Live API');
@@ -150,12 +144,13 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
       liveSession.on('message', (message) => {
         console.log('📨 Mensaje recibido de Gemini:', JSON.stringify(message, null, 2));
         
-        if (message.serverContent?.modelTurn?.parts) {
-          const parts = message.serverContent.modelTurn.parts;
+        if (message.data?.parts) {
+          const parts = message.data.parts;
           for (const part of parts) {
-            if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.bytes) {
-              // Gemini Live API devuelve audio como Uint8Array en .bytes
-              playAudioResponse(part.inlineData.bytes);
+            if (part.inlineData?.mimeType?.includes('audio') && part.inlineData.data) {
+              // Convertir base64 a Uint8Array
+              const audioData = new Uint8Array(atob(part.inlineData.data).split('').map(char => char.charCodeAt(0)));
+              playAudioResponse(audioData);
             }
             
             if (part.text) {
@@ -164,9 +159,9 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
           }
         }
 
-        if (message.serverContent?.turnComplete) {
+        if (message.turnComplete) {
           console.log('✅ Turno completado');
-          // El estado se gestiona por playNextAudioChunk para evitar interrupciones
+          setState('listening');
         }
       });
 
@@ -191,6 +186,9 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         setState('idle');
         stopAudioProcessing();
       });
+
+      // Conectar la sesión
+      await liveSession.connect();
       
       liveSessionRef.current = liveSession;
       return liveSession;
@@ -249,18 +247,21 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
 
       // Enviar audio procesado a Gemini
       audioProcessorNodeRef.current.port.onmessage = (event) => {
-        if (liveSessionRef.current && liveSessionRef.current.state === 'open') {
-          const pcmData = new Int16Array(event.data); // Recibe Int16Array del AudioWorklet
-          const uint8Array = new Uint8Array(pcmData.buffer);
+        if (liveSessionRef.current && liveSessionRef.current.connected) {
+          const pcmData = new Int16Array(event.data);
           
-          // La LiveSession espera un array de Part, donde el audio va en inlineData.bytes
-          const audioPart: any = {
-            inlineData: {
-              bytes: uint8Array, // Enviar Uint8Array directamente
-              mimeType: "audio/pcm;rate=16000",
-            },
-          };
-          liveSessionRef.current.send([audioPart]); // Usar el método send de LiveSession
+          // Convertir PCM a base64 para el nuevo SDK
+          const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
+          
+          // Enviar usando la nueva estructura del SDK @google/genai
+          liveSessionRef.current.send({
+            parts: [{
+              inlineData: {
+                mimeType: "audio/pcm;rate=16000;channels=1",
+                data: base64Audio
+              }
+            }]
+          });
         }
       };
 
