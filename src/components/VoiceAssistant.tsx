@@ -122,7 +122,7 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
         console.log('✅ Conexión WebSocket establecida');
         liveSession.connected = true;
         
-        // Setup message corregido según la documentación oficial
+        // Setup message corregido - outputAudioTranscription va fuera de generationConfig
         const setupMessage = {
           setup: {
             model: "models/gemini-2.0-flash-exp",
@@ -134,9 +134,9 @@ const VoiceAssistant: React.FC<VoiceAssistantProps> = () => {
                     voiceName: "Aoede"
                   }
                 }
-              },
-              outputAudioTranscription: {} // Esto habilita las transcripciones de texto
-            }
+              }
+            },
+            outputAudioTranscription: {} // Este campo va fuera de generationConfig
           }
         };
         
